@@ -1,0 +1,9 @@
+frontend/node_modules/
+frontend/dist/
+data/
+backend/server
+.env
+*.db*
+*.sqlite*
+coverage.out
+__pycache__/

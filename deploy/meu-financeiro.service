@@ -1,0 +1,23 @@
+[Unit]
+Description=Meu Financeiro API
+After=network.target
+
+[Service]
+Type=simple
+User=financeiro
+Group=financeiro
+WorkingDirectory=/opt/meu-financeiro/current/backend
+EnvironmentFile=/etc/meu-financeiro.env
+ExecStart=/opt/meu-financeiro/current/backend/server
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meu-financeiro
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

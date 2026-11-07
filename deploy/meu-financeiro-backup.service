@@ -1,0 +1,17 @@
+[Unit]
+Description=Encrypted Meu Financeiro backup
+RequiresMountsFor=/mnt/financeiro-backup
+
+[Service]
+Type=oneshot
+User=financeiro
+Group=financeiro
+EnvironmentFile=/etc/meu-financeiro-backup.env
+WorkingDirectory=/opt/meu-financeiro/current/deploy
+ExecStart=/usr/bin/python3 backup.py --database /var/lib/meu-financeiro/financeiro.db --destination /mnt/financeiro-backup --recipient ${AGE_RECIPIENT}
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/meu-financeiro /mnt/financeiro-backup
