@@ -88,7 +88,10 @@ PRAGMA user_version=2;`)
 	}
 	if version == 2 {
 		tx, e := db.Begin()
-		if e != nil { db.Close(); return nil, e }
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
 		_, e = tx.Exec(`
 CREATE TABLE IF NOT EXISTS settlements(
  id INTEGER PRIMARY KEY,
@@ -124,8 +127,15 @@ CREATE TABLE IF NOT EXISTS goal_contributions(
 CREATE INDEX IF NOT EXISTS settlements_household_month ON settlements(household_id,month);
 CREATE INDEX IF NOT EXISTS goal_contributions_goal ON goal_contributions(goal_id);
 PRAGMA user_version=3;`)
-		if e != nil { tx.Rollback(); db.Close(); return nil, e }
-		if e = tx.Commit(); e != nil { db.Close(); return nil, e }
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
 	}
 	if err = os.Chmod(path, 0600); err != nil {
 		db.Close()

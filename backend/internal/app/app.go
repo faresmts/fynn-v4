@@ -35,6 +35,12 @@ func (a *App) Handler(frontend string) http.Handler {
 	m.HandleFunc("POST /api/v1/sharing/income-snapshots", a.authenticated(a.saveIncomeSnapshot))
 	m.HandleFunc("GET /api/v1/sharing/summary", a.authenticated(a.sharingSummary))
 	m.HandleFunc("POST /api/v1/transactions/{id}/split", a.authenticated(a.splitTransaction))
+	m.HandleFunc("GET /api/v1/settlements", a.authenticated(a.settlements))
+	m.HandleFunc("POST /api/v1/settlements", a.authenticated(a.createSettlement))
+	m.HandleFunc("DELETE /api/v1/settlements/{id}", a.authenticated(a.deleteSettlement))
+	m.HandleFunc("GET /api/v1/goals", a.authenticated(a.goals))
+	m.HandleFunc("POST /api/v1/goals", a.authenticated(a.createGoal))
+	m.HandleFunc("POST /api/v1/goals/{id}/contributions", a.authenticated(a.contributeGoal))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "Recurso não encontrado.") })
 	fs := http.FileServer(http.Dir(frontend))
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -52,6 +52,21 @@ export type Dashboard = {
   accounts: Account[];
   history: ({ month: string; count: number } & Totals)[];
   categories: { name: string; amount_cents: number }[];
+  contributors: {
+    user_id: number;
+    name: string;
+    paid_cents: number;
+    responsibility_cents: number;
+    balance_cents: number;
+  }[];
+  household_expenses: {
+    id: number;
+    description: string;
+    category: string;
+    amount_cents: number;
+    status: string;
+    due_date: string;
+  }[];
   recent: Transaction[];
   upcoming: Transaction[];
   today: string;
@@ -64,4 +79,49 @@ export type Rule = {
   account_id: number;
   category_id: number;
   starts_on: string;
+};
+export type Settlement = {
+  id: number;
+  sender_id: number;
+  sender: string;
+  receiver_id: number;
+  receiver: string;
+  amount_cents: number;
+  month: string;
+  settled_on: string;
+  note: string;
+};
+export type Goal = {
+  id: number;
+  owner_id: number;
+  owner: string;
+  name: string;
+  target_cents: number;
+  saved_cents: number;
+  deadline: string | null;
+  visibility: string;
+  progress_bps: number;
+};
+export type IncomeSnapshot = {
+  id: number;
+  user_id: number;
+  user_name: string;
+  month: string;
+  income_cents: number;
+  rule_mode: 'monthly_income_ratio' | 'equal' | 'custom';
+  confirmed: boolean;
+  version: number;
+};
+export type SharingSummary = {
+  month: string;
+  status: 'ready' | 'needs_rule';
+  total_income_cents: number;
+  people: {
+    id: number;
+    name: string;
+    income_cents: number;
+    confirmed: boolean;
+    ratio_bps: number;
+  }[];
+  message?: string;
 };

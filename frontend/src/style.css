@@ -1033,6 +1033,161 @@ footer .green-dot {
 .context-note svg {
   flex-shrink: 0;
 }
+.recurring-note {
+  margin-top: 16px;
+}
+.household-income-panel {
+  margin-bottom: 20px;
+}
+.contributors-panel {
+  margin-bottom: 20px;
+}
+.household-expenses-panel {
+  margin-bottom: 20px;
+}
+.household-total {
+  font-size: 20px;
+  color: var(--green);
+  white-space: nowrap;
+}
+.household-expenses-list {
+  display: flex;
+  flex-direction: column;
+}
+.household-expense-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.household-expense-row .amount {
+  margin-left: auto;
+}
+.settlements-panel {
+  margin-bottom: 20px;
+}
+.settlement-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.planning-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.goal-row {
+  padding: 15px 0;
+  border-top: 1px solid var(--line);
+}
+.goal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+}
+.goal-track {
+  height: 8px;
+  background: #223044;
+  border-radius: 99px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+.goal-track i {
+  display: block;
+  height: 100%;
+  background: var(--green);
+  border-radius: inherit;
+}
+.goal-contribute-button {
+  margin-top: 10px;
+}
+.goal-contribution-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.goal-contribution-form input {
+  max-width: 170px;
+  padding: 8px 10px;
+}
+@media (max-width: 700px) {
+  .planning-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.contributors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.contributor-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.contributor-main {
+  flex: 1;
+  min-width: 0;
+}
+.contributor-main strong {
+  font-size: 12px;
+}
+.contributor-main small {
+  margin-top: 5px;
+}
+.contributor-balance {
+  text-align: right;
+}
+.contributor-balance strong {
+  font-size: 13px;
+}
+.contributor-balance small {
+  margin-top: 4px;
+}
+.income-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.income-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding-top: 16px;
+}
+.income-actions .form-hint {
+  color: var(--muted);
+}
+.split-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  border: 1px solid var(--line);
+  background: #0f1a29;
+  border-radius: 8px;
+  padding: 14px;
+}
+.split-amount {
+  border: 1px solid #314057;
+  border-radius: 8px;
+  color: var(--green);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  padding: 10px 12px;
+}
+.split-amount small {
+  margin-top: 4px;
+}
 .report-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1546,6 +1701,16 @@ dialog::backdrop {
   }
 }
 @media (max-width: 700px) {
+  .income-grid {
+    grid-template-columns: 1fr;
+  }
+  .income-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .split-preview {
+    grid-template-columns: 1fr;
+  }
   aside {
     transform: translateX(-100%);
     width: 235px;

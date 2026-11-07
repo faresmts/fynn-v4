@@ -8,6 +8,10 @@
     Transaction,
     Dashboard,
     Rule,
+    IncomeSnapshot,
+    SharingSummary,
+    Settlement,
+    Goal,
   } from './lib/types';
   let user = $state<User | null>(null),
     demo = $state(false),
@@ -35,6 +39,10 @@
     categories = $state<Category[]>([]),
     transactions = $state<Transaction[]>([]),
     rules = $state<Rule[]>([]),
+    incomeSnapshots = $state<IncomeSnapshot[]>([]),
+    sharingSummary = $state<SharingSummary | null>(null),
+    settlements = $state<Settlement[]>([]),
+    goals = $state<Goal[]>([]),
     dashboard = $state<Dashboard | null>(null);
   let total = $state(0),
     offset = $state(0),
@@ -43,6 +51,13 @@
     stateFilter = $state('all'),
     categoryFilter = $state('all'),
     accountFilter = $state('all');
+  let incomeInputs = $state<Record<string, string>>({});
+  let goalName = $state(''),
+    goalAmount = $state(''),
+    goalVisibility = $state('household');
+  let contributionGoalId = $state<number | null>(null),
+    contributionAmount = $state('');
+  let settlementReceiverId = $state<number | null>(null), settlementAmount = $state(''), settlementNote = $state('');
   let dialog: HTMLDialogElement;
   let modal = $state(''),
     selected = $state<Transaction | null>(null),
@@ -60,6 +75,10 @@
     visibility = $state('private'),
     day = $state(10),
     accountKind = $state('checking');
+  let splitMode = $state<'monthly_income_ratio' | 'equal' | 'custom'>(
+    'monthly_income_ratio',
+  );
+  let customShares = $state<Record<string, string>>({});
   let name = $state(''),
     currentPassword = $state(''),
     newPassword = $state('');
@@ -71,6 +90,7 @@
     { id: 'accounts', name: 'Minhas contas', icon: 'wallet' },
     { id: 'recurring', name: 'Despesas fixas', icon: 'repeat' },
     { id: 'household', name: 'Nossa casa', icon: 'home' },
+    { id: 'planning', name: 'Metas e planejamento', icon: 'spark' },
     { id: 'reports', name: 'Relatórios', icon: 'chart' },
   ];
   const palette = [
@@ -219,15 +239,22 @@
     error = '';
     try {
       const q = `?month=${month}&context=${context}`;
-      const [d, a, c, t, rs] = await Promise.all([
-        api<Dashboard>('/dashboard' + q),
-        api<Account[]>('/accounts'),
-        api<Category[]>('/categories'),
-        api<{ items: Transaction[]; total: number }>(
-          '/transactions' + q + `&offset=${offset}`,
-        ),
-        api<Rule[]>('/recurring-rules'),
-      ]);
+      const [d, a, c, t, rs, incomes, summary, settlementsData, goalsData] =
+        await Promise.all([
+          api<Dashboard>('/dashboard' + q),
+          api<Account[]>('/accounts'),
+          api<Category[]>('/categories'),
+          api<{ items: Transaction[]; total: number }>(
+            '/transactions' + q + `&offset=${offset}`,
+          ),
+          api<Rule[]>('/recurring-rules'),
+          api<IncomeSnapshot[]>(
+            '/sharing/income-snapshots' + `?month=${month}`,
+          ),
+          api<SharingSummary>('/sharing/summary' + `?month=${month}`),
+          api<Settlement[]>('/settlements' + `?month=${month}`),
+          api<Goal[]>('/goals'),
+        ]);
       if (seq !== loadSequence) return;
       dashboard = d;
       dateToday = d.today;
@@ -236,11 +263,91 @@
       transactions = t.items;
       total = t.total;
       rules = rs;
+      incomeSnapshots = incomes;
+      sharingSummary = summary;
+      settlements = settlementsData;
+      goals = goalsData;
+      for (const person of summary.people) {
+        if (incomeInputs[String(person.id)] === undefined) {
+          incomeInputs[String(person.id)] = (person.income_cents / 100)
+            .toFixed(2)
+            .replace('.', ',');
+        }
+      }
     } catch (e) {
       if (seq === loadSequence) error = (e as Error).message;
     } finally {
       if (seq === loadSequence) loading = false;
     }
+  }
+  async function saveReferenceIncomes() {
+    if (!sharingSummary) return;
+    busy = true;
+    error = '';
+    try {
+      for (const person of sharingSummary.people) {
+        await api('/sharing/income-snapshots', 'POST', {
+          user_id: person.id,
+          month,
+          income_cents: cents(incomeInputs[String(person.id)] || '0'),
+          rule_mode: 'monthly_income_ratio',
+          confirmed: true,
+        });
+      }
+      notice = `Rendas de referência salvas para ${monthLabel(month)}.`;
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
+  async function createGoal() {
+    busy = true;
+    error = '';
+    try {
+      await api('/goals', 'POST', {
+        name: goalName,
+        target_cents: cents(goalAmount),
+        visibility: goalVisibility,
+        deadline: null,
+      });
+      goalName = '';
+      goalAmount = '';
+      notice = 'Meta criada.';
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
+  async function addGoalContribution(goalId: number) {
+    busy = true;
+    error = '';
+    try {
+      await api(`/goals/${goalId}/contributions`, 'POST', {
+        amount_cents: cents(contributionAmount),
+        date: dateToday,
+        note: 'Aporte registrado pelo app',
+      });
+      contributionAmount = '';
+      contributionGoalId = null;
+      notice = 'Aporte registrado na meta.';
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
+  async function createSettlement() {
+    if (!settlementReceiverId || !user) return;
+    busy = true; error = '';
+    try {
+      await api('/settlements','POST',{sender_id:user.id,receiver_id:settlementReceiverId,amount_cents:cents(settlementAmount),month,settled_on:dateToday,note:settlementNote});
+      settlementAmount=''; settlementNote=''; settlementReceiverId=null; notice='Acerto registrado.'; await load();
+    } catch(e){error=(e as Error).message} finally{busy=false}
   }
   function navigate(id: string) {
     page = id;
@@ -278,6 +385,12 @@
     status = 'paid';
     visibility = 'private';
     day = 10;
+    splitMode = 'monthly_income_ratio';
+    customShares = {};
+    if (which === 'split' && sharingSummary) {
+      for (const person of sharingSummary.people)
+        customShares[String(person.id)] = '';
+    }
     requestKey = crypto.randomUUID();
     await tick();
     dialog.showModal();
@@ -334,11 +447,25 @@
           day: Number(day),
           starts_on: competence,
         });
+      } else if (modal === 'split' && selected) {
+        const custom = Object.fromEntries(
+          Object.entries(customShares).map(([id, value]) => [
+            id,
+            cents(value || '0'),
+          ]),
+        );
+        await api(`/transactions/${selected.id}/split`, 'POST', {
+          version: selected.version,
+          mode: splitMode,
+          custom_cents: custom,
+        });
       } else if (selected) {
         await api(`/transactions/${selected.id}`, 'PATCH', {
           version: selected.version,
           action: modal,
-          amount_cents: modal === 'cancel' ? 0 : cents(amount),
+          amount_cents: ['cancel', 'share', 'unshare'].includes(modal)
+            ? 0
+            : cents(amount),
           paid_date: date,
           description,
         });
@@ -346,7 +473,13 @@
       notice =
         modal === 'cancel'
           ? 'Lançamento cancelado. Histórico preservado.'
-          : 'Salvo com sucesso.';
+          : modal === 'share'
+            ? 'Transação compartilhada na seção Nossa casa.'
+            : modal === 'unshare'
+              ? 'Transação removida da seção Nossa casa.'
+              : modal === 'split'
+                ? 'Rateio salvo na transação compartilhada.'
+                : 'Salvo com sucesso.';
       busy = false;
       closeModal();
       await load();
@@ -713,64 +846,290 @@
                 pessoais permanecem privados. Rateio e acertos chegam no MVP 2.</span
               >
             </div>{/if}
+          {#if context === 'household' && sharingSummary}
+            <section class="panel household-income-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Renda de referência para o rateio</h2>
+                  <p>
+                    Use a renda líquida confirmada deste mês. Ela não altera
+                    meses anteriores.
+                  </p>
+                </div>
+                <span class="subtle-pill"
+                  >{sharingSummary.status === 'ready'
+                    ? 'Pronto para ratear'
+                    : 'Configuração pendente'}</span
+                >
+              </div>
+              <div class="income-grid">
+                {#each sharingSummary.people as person}
+                  <label
+                    >{person.name}
+                    <input
+                      bind:value={incomeInputs[String(person.id)]}
+                      inputmode="decimal"
+                      placeholder="0,00"
+                      aria-label={`Renda de referência de ${person.name}`}
+                    />
+                    <small
+                      >{person.confirmed
+                        ? `${(person.ratio_bps / 100).toFixed(1)}% da responsabilidade`
+                        : 'Ainda não confirmada'}</small
+                    >
+                  </label>
+                {/each}
+              </div>
+              <div class="income-actions">
+                <span class="form-hint"
+                  ><Icon name="shield" size={14} /> A renda é usada somente para calcular
+                  cotas compartilhadas.</span
+                >
+                <button
+                  class="primary"
+                  onclick={saveReferenceIncomes}
+                  disabled={busy || !sharingSummary.people.length}
+                  ><Icon name="check" size={16} />Salvar rendas do mês</button
+                >
+              </div>
+            </section>
+          {/if}
+          {#if context === 'household' && dashboard.household_expenses.length}
+            <section class="panel household-expenses-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Contas compartilhadas</h2>
+                  <p>Saídas da casa em {monthLabel(month)}.</p>
+                </div>
+                <strong class="household-total"
+                  >{money(dashboard.totals.expense_cents)}</strong
+                >
+              </div>
+              <div class="household-expenses-list">
+                {#each dashboard.household_expenses as expense}
+                  <div class="household-expense-row">
+                    <div class="transaction-icon">
+                      <Icon
+                        name={expense.category === 'Moradia' ? 'home' : 'out'}
+                        size={18}
+                      />
+                    </div>
+                    <div class="contributor-main">
+                      <strong>{expense.description}</strong><small
+                        >{expense.category} · {expense.status === 'paid'
+                          ? 'Pago'
+                          : `Vence ${dateLabel(expense.due_date)}`}</small
+                      >
+                    </div>
+                    <strong class="amount">{money(expense.amount_cents)}</strong
+                    >
+                  </div>
+                {/each}
+              </div>
+            </section>
+          {/if}
+          {#if context === 'household' && dashboard.contributors.length}
+            <section class="panel contributors-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Contribuição para a casa</h2>
+                  <p>Despesas compartilhadas pagas em {monthLabel(month)}.</p>
+                </div>
+                <span class="icon-muted"><Icon name="home" size={19} /></span>
+              </div>
+              <div class="contributors-list">
+                {#each dashboard.contributors as contributor}
+                  <div class="contributor-row">
+                    <span class="avatar"
+                      >{contributor.name.slice(0, 2).toUpperCase()}</span
+                    >
+                    <div class="contributor-main">
+                      <strong>{contributor.name}</strong><small
+                        >Pagou {money(contributor.paid_cents)} · Responsabilidade
+                        {money(contributor.responsibility_cents)}</small
+                      >
+                    </div>
+                    <div
+                      class="contributor-balance"
+                      class:positive={contributor.balance_cents > 0}
+                      class:negative={contributor.balance_cents < 0}
+                    >
+                      <strong
+                        >{contributor.balance_cents > 0
+                          ? '+'
+                          : contributor.balance_cents < 0
+                            ? '−'
+                            : ''}{money(
+                          Math.abs(contributor.balance_cents),
+                        )}</strong
+                      ><small
+                        >{contributor.balance_cents > 0
+                          ? 'tem a receber'
+                          : contributor.balance_cents < 0
+                            ? 'tem a pagar'
+                            : 'equilibrado'}</small
+                      >
+                    </div>
+                  </div>
+                {/each}
+              </div>
+              <p class="form-hint">
+                <Icon name="info" size={14} /> O saldo compara quem pagou com a responsabilidade
+                rateada. Sem cotas salvas, a responsabilidade aparece como R$ 0,00.
+              </p>
+            </section>
+          {/if}
+          {#if context === 'household' && settlements.length}
+            <section class="panel settlements-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Acertos registrados</h2>
+                  <p>
+                    Transferências entre moradores, sem inflar as despesas da
+                    casa.
+                  </p>
+                </div>
+                <Icon name="arrows" />
+              </div>
+              {#each settlements as settlement}<div class="settlement-row">
+                  <span class="date-tile"
+                    ><strong>{settlement.settled_on.slice(8)}</strong><small
+                      >{shortMonth(settlement.settled_on.slice(0, 7))}</small
+                    ></span
+                  >
+                  <div class="contributor-main">
+                    <strong>{settlement.sender} → {settlement.receiver}</strong
+                    ><small>{settlement.note || 'Acerto do mês'}</small>
+                  </div>
+                  <strong>{money(settlement.amount_cents)}</strong>
+                </div>{/each}
+            </section>
+          {/if}
+          {#if context === 'household' && sharingSummary && sharingSummary.people.length > 1}
+            <section class="panel settlement-form-panel">
+              <div class="panel-heading"><div><h2>Registrar acerto</h2><p>Registre uma transferência entre moradores. Ela não altera as despesas da casa.</p></div><Icon name="arrows" /></div>
+              <form class="settlement-form" onsubmit={(e)=>{e.preventDefault();void createSettlement()}}>
+                <label>Quem recebe<select bind:value={settlementReceiverId} required><option value={null} disabled>Selecione o morador</option>{#each sharingSummary.people.filter((p)=>p.id !== user?.id) as person}<option value={person.id}>{person.name}</option>{/each}</select></label>
+                <label>Valor do acerto (R$)<input bind:value={settlementAmount} inputmode="decimal" placeholder="0,00" required /></label>
+                <label>Observação (opcional)<input bind:value={settlementNote} maxlength="200" placeholder="Acerto das contas de novembro" /></label>
+                <button class="primary" disabled={busy || !settlementReceiverId}><Icon name="check" size={16}/>Registrar acerto</button>
+              </form>
+            </section>
+          {/if}
           <section class="stats">
             <article class="stat balance">
               <div class="stat-label">
                 <span
                   >{context === 'household'
-                    ? 'Resultado compartilhado'
+                    ? 'Saídas da casa'
                     : 'Saldo das minhas contas'}</span
                 ><span class="stat-icon"><Icon name="wallet" size={19} /></span>
               </div>
               <strong
                 >{money(
                   context === 'household'
-                    ? dashboard.totals.result_cents
+                    ? dashboard.totals.expense_cents
                     : dashboard.balance_cents,
                 )}</strong
               >
               <div class="stat-foot">
                 <span class="green-dot"></span>{context === 'household'
-                  ? 'Receitas menos despesas realizadas'
+                  ? 'Total de contas compartilhadas'
                   : 'Saldo atual · todas as minhas contas'}
               </div>
             </article>
             <article class="stat">
               <div class="stat-label">
-                <span>Receitas do mês</span><span class="stat-icon positive"
+                <span
+                  >{context === 'household'
+                    ? 'Minha parte'
+                    : 'Receitas do mês'}</span
+                ><span class="stat-icon positive"
                   ><Icon name="up" size={18} /></span
                 >
               </div>
-              <strong>{money(dashboard.totals.income_cents)}</strong>
+              <strong
+                >{context === 'household'
+                  ? money(
+                      dashboard.contributors.find((c) => c.user_id === user?.id)
+                        ?.responsibility_cents || 0,
+                    )
+                  : money(dashboard.totals.income_cents)}</strong
+              >
               <div class="stat-foot">
-                <span class="positive">↗ Recebidas</span><span
-                  >na competência</span
+                <span class="positive"
+                  >{context === 'household'
+                    ? 'Deve contribuir'
+                    : '↗ Recebidas'}</span
+                ><span
+                  >{context === 'household'
+                    ? 'neste mês'
+                    : 'na competência'}</span
                 >
               </div>
             </article>
             <article class="stat">
               <div class="stat-label">
-                <span>Despesas do mês</span><span class="stat-icon negative"
+                <span
+                  >{context === 'household'
+                    ? 'Parte do outro morador'
+                    : 'Despesas do mês'}</span
+                ><span class="stat-icon negative"
                   ><Icon name="out" size={18} /></span
                 >
               </div>
-              <strong>{money(dashboard.totals.expense_cents)}</strong>
+              <strong
+                >{context === 'household'
+                  ? money(
+                      Math.max(
+                        0,
+                        dashboard.totals.expense_cents -
+                          (dashboard.contributors.find(
+                            (c) => c.user_id === user?.id,
+                          )?.responsibility_cents || 0),
+                      ),
+                    )
+                  : money(dashboard.totals.expense_cents)}</strong
+              >
               <div class="stat-foot">
-                <span class="negative">↘ Pagas</span><span>na competência</span>
+                <span class="negative"
+                  >{context === 'household'
+                    ? 'Deve contribuir'
+                    : '↘ Pagas'}</span
+                ><span
+                  >{context === 'household'
+                    ? 'neste mês'
+                    : 'na competência'}</span
+                >
               </div>
             </article>
             <article class="stat">
               <div class="stat-label">
-                <span>Resultado do mês</span><span class="stat-icon"
-                  ><Icon name="chart" size={18} /></span
-                >
+                <span
+                  >{context === 'household'
+                    ? 'Total pago'
+                    : 'Resultado do mês'}</span
+                ><span class="stat-icon"><Icon name="chart" size={18} /></span>
               </div>
               <strong
-                class:positive={dashboard.totals.result_cents >= 0}
-                class:negative={dashboard.totals.result_cents < 0}
-                >{money(dashboard.totals.result_cents)}</strong
+                class:positive={context !== 'household' &&
+                  dashboard.totals.result_cents >= 0}
+                class:negative={context !== 'household' &&
+                  dashboard.totals.result_cents < 0}
+                >{context === 'household'
+                  ? money(
+                      dashboard.contributors.reduce(
+                        (sum, c) => sum + c.paid_cents,
+                        0,
+                      ),
+                    )
+                  : money(dashboard.totals.result_cents)}</strong
               >
-              <div class="stat-foot">Receitas − despesas realizadas</div>
+              <div class="stat-foot">
+                {context === 'household'
+                  ? 'Desembolsos já realizados'
+                  : 'Receitas − despesas realizadas'}
+              </div>
             </article>
           </section>
           <div class="charts-grid">
@@ -1132,7 +1491,26 @@
                                 title="Editar valor e descrição"
                                 onclick={() => openModal('edit', t)}
                                 ><Icon name="edit" size={16} /></button
+                              >{/if}{#if t.type === 'expense' && t.visibility === 'household'}<button
+                                class="icon-button"
+                                aria-label={`Ratear ${t.description}`}
+                                title="Visualizar e aplicar rateio"
+                                onclick={() => openModal('split', t)}
+                                ><Icon name="chart" size={16} /></button
                               >{/if}<button
+                              class="icon-button"
+                              aria-label={`${t.visibility === 'private' ? 'Compartilhar' : 'Remover compartilhamento'} ${t.description}`}
+                              title={t.visibility === 'private'
+                                ? 'Compartilhar na Nossa casa'
+                                : 'Remover da Nossa casa'}
+                              onclick={() =>
+                                openModal(
+                                  t.visibility === 'private'
+                                    ? 'share'
+                                    : 'unshare',
+                                  t,
+                                )}><Icon name="home" size={16} /></button
+                            ><button
                               class="icon-button"
                               aria-label={`Cancelar ${t.description}`}
                               title="Cancelar lançamento"
@@ -1263,11 +1641,122 @@
                 >
               </div>{/each}
           </section>
-          <div class="context-note">
+          <div class="context-note recurring-note">
             <Icon name="info" size={18} /><span
               >Em meses curtos, vencimentos nos dias 29–31 usam o último dia
               válido. Confirme o valor real ao pagar a ocorrência em Transações.</span
             >
+          </div>{/if}
+        {#if page === 'planning'}<div class="planning-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Metas de economia</h2>
+                  <p>Reserve dinheiro sem criar uma nova despesa.</p>
+                </div>
+                <Icon name="spark" />
+              </div>
+              <form
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  void createGoal();
+                }}
+              >
+                <label
+                  >Nome da meta<input
+                    bind:value={goalName}
+                    required
+                    placeholder="Ex.: Viagem"
+                  /></label
+                >
+                <label
+                  >Valor alvo (R$)<input
+                    bind:value={goalAmount}
+                    required
+                    inputmode="decimal"
+                    placeholder="10.000,00"
+                  /></label
+                >
+                <label
+                  >Visibilidade<select bind:value={goalVisibility}
+                    ><option value="household">Nossa casa</option><option
+                      value="private">Somente eu</option
+                    ></select
+                  ></label
+                >
+                <button class="primary" disabled={busy}
+                  ><Icon name="plus" size={16} />Criar meta</button
+                >
+              </form>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>Suas metas</h2>
+                  <p>Progresso dos aportes registrados.</p>
+                </div>
+              </div>
+              {#each goals as goal}<div class="goal-row">
+                  <div class="goal-head">
+                    <strong>{goal.name}</strong><span
+                      >{money(goal.saved_cents)} / {money(
+                        goal.target_cents,
+                      )}</span
+                    >
+                  </div>
+                  <div class="goal-track">
+                    <i
+                      style:width={`${Math.min(100, goal.progress_bps / 100)}%`}
+                    ></i>
+                  </div>
+                  <small
+                    >{Math.min(100, goal.progress_bps / 100).toFixed(0)}% · {goal.owner}{goal.visibility ===
+                    'household'
+                      ? ' · Nossa casa'
+                      : ''}</small
+                  >
+                  {#if goal.owner_id === user?.id}
+                    {#if contributionGoalId === goal.id}
+                      <form
+                        class="goal-contribution-form"
+                        onsubmit={(e) => {
+                          e.preventDefault();
+                          void addGoalContribution(goal.id);
+                        }}
+                      >
+                        <input
+                          bind:value={contributionAmount}
+                          inputmode="decimal"
+                          placeholder="Aporte em R$"
+                          aria-label={`Aporte para ${goal.name}`}
+                          required
+                        />
+                        <button class="primary small-button" disabled={busy}
+                          >Adicionar</button
+                        >
+                        <button
+                          class="secondary small-button"
+                          type="button"
+                          onclick={() => {
+                            contributionGoalId = null;
+                            contributionAmount = '';
+                          }}>Cancelar</button
+                        >
+                      </form>
+                    {:else}
+                      <button
+                        class="secondary small-button goal-contribute-button"
+                        onclick={() => {
+                          contributionGoalId = goal.id;
+                          contributionAmount = '';
+                        }}>Adicionar aporte</button
+                      >
+                    {/if}
+                  {/if}
+                </div>{:else}<div class="empty compact">
+                  <p>Crie sua primeira meta.</p>
+                </div>{/each}
+            </section>
           </div>{/if}
         {#if page === 'settings'}<div class="settings-grid">
             <section class="panel">
@@ -1384,6 +1873,9 @@
               pay: 'Confirmar pagamento',
               edit: 'Editar lançamento',
               cancel: 'Cancelar lançamento',
+              share: 'Compartilhar na Nossa casa',
+              unshare: 'Remover da Nossa casa',
+              split: 'Ratear despesa compartilhada',
             } as Record<string, string>
           )[modal]}
         </h2>
@@ -1403,12 +1895,79 @@
       {#if modalError}<div class="alert error" role="alert">
           {modalError}
         </div>{/if}
-      {#if modal === 'cancel'}<p>
-          Cancelar <strong>{selected?.description}</strong> ({money(
-            selected?.amount_cents,
-          )})? O efeito no saldo será revertido e o histórico permanecerá
-          registrado.
+      {#if modal === 'cancel' || modal === 'share' || modal === 'unshare'}<p>
+          {#if modal === 'cancel'}Cancelar <strong
+              >{selected?.description}</strong
+            >
+            ({money(selected?.amount_cents)})? O efeito no saldo será revertido
+            e o histórico permanecerá registrado.
+          {:else if modal === 'share'}Compartilhar <strong
+              >{selected?.description}</strong
+            >
+            com a seção <strong>Nossa casa</strong>? A outra pessoa poderá
+            visualizar este lançamento.
+          {:else}Remover <strong>{selected?.description}</strong> da seção
+            <strong>Nossa casa</strong>? O lançamento voltará a ficar privado.{/if}
         </p>
+      {:else if modal === 'split'}
+        <p class="muted">
+          {selected?.description} · Total da despesa:
+          <strong>{money(selected?.amount_cents)}</strong>. O rateio define
+          responsabilidades e não cria uma segunda despesa.
+        </p>
+        <label
+          >Regra de rateio
+          <select bind:value={splitMode}>
+            <option value="monthly_income_ratio"
+              >Proporcional à renda confirmada</option
+            >
+            <option value="equal">50% para cada pessoa</option>
+            <option value="custom">Definir valores manualmente</option>
+          </select>
+        </label>
+        {#if sharingSummary?.people.length}
+          <div class="split-preview">
+            {#each sharingSummary.people as person, index}
+              {@const proportional =
+                sharingSummary.status === 'ready'
+                  ? Math.floor(
+                      ((selected?.amount_cents || 0) * person.ratio_bps) /
+                        10000,
+                    )
+                  : 0}
+              {@const equal =
+                index === 0
+                  ? Math.floor((selected?.amount_cents || 0) / 2)
+                  : (selected?.amount_cents || 0) -
+                    Math.floor((selected?.amount_cents || 0) / 2)}
+              <label
+                >{person.name}
+                {#if splitMode === 'custom'}<input
+                    bind:value={customShares[String(person.id)]}
+                    inputmode="decimal"
+                    placeholder="0,00"
+                    aria-label={`Cota de ${person.name}`}
+                  />{:else}<div class="split-amount">
+                    {money(splitMode === 'equal' ? equal : proportional)}<small
+                      >{splitMode === 'equal'
+                        ? '50,0%'
+                        : `${(person.ratio_bps / 100).toFixed(1)}%`}</small
+                    >
+                  </div>{/if}
+              </label>
+            {/each}
+          </div>
+          {#if splitMode === 'monthly_income_ratio' && sharingSummary.status !== 'ready'}<div
+              class="alert error"
+            >
+              Confirme as duas rendas de referência antes de usar o rateio
+              proporcional.
+            </div>{/if}
+        {:else}<div class="empty compact">
+            <p>
+              Adicione os dois moradores e confirme as rendas antes de ratear.
+            </p>
+          </div>{/if}
       {:else}
         {#if modal === 'transaction' || modal === 'category'}<label
             >Tipo<select
@@ -1589,14 +2148,21 @@
           class="primary"
           class:danger={modal === 'cancel'}
           disabled={busy ||
-            ((modal === 'transaction' || modal === 'rule') && !accounts.length)}
+            ((modal === 'transaction' || modal === 'rule') &&
+              !accounts.length) ||
+            (modal === 'split' &&
+              (!sharingSummary?.people.length ||
+                (splitMode === 'monthly_income_ratio' &&
+                  sharingSummary.status !== 'ready')))}
           >{busy
             ? 'Salvando…'
             : modal === 'cancel'
               ? 'Confirmar cancelamento'
               : modal === 'pay'
                 ? 'Confirmar pagamento'
-                : 'Salvar'}<Icon name="check" size={17} /></button
+                : modal === 'split'
+                  ? 'Salvar rateio'
+                  : 'Salvar'}<Icon name="check" size={17} /></button
         >
       </div>
     </form>{/if}
