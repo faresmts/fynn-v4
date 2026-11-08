@@ -57,14 +57,9 @@
     goalVisibility = $state('household');
   let contributionGoalId = $state<number | null>(null),
     contributionAmount = $state('');
-  type CardImportLine = { id: number; date: string; description: string; amount_cents: number; card_last4?: string; installment?: string };
-  type CardImportPreview = { id: number; institution: string; filename: string; statement_month: string; lines: CardImportLine[]; total_cents: number };
-  let cardImport = $state<CardImportPreview | null>(null),
-    cardImportFile = $state<File | null>(null),
-    cardImportAccount = $state(''),
-    cardImportCategory = $state('');
   type Card = { id: number; institution: string; name: string; last4?: string; active: boolean };
   let cards = $state<Card[]>([]), cardInstitution = $state('picpay'), cardName = $state(''), cardLast4 = $state('');
+  let csvFile = $state<File | null>(null), csvAccount = $state(''), csvCategory = $state('');
   let settlementReceiverId = $state<number | null>(null),
     settlementAmount = $state(''),
     settlementNote = $state('');
@@ -101,7 +96,6 @@
     { id: 'recurring', name: 'Despesas fixas', icon: 'repeat' },
     { id: 'household', name: 'Nossa casa', icon: 'home' },
     { id: 'planning', name: 'Metas e planejamento', icon: 'spark' },
-    { id: 'card-import', name: 'Importar fatura', icon: 'upload' },
     { id: 'reports', name: 'Relatórios', icon: 'chart' },
   ];
   const palette = [
@@ -209,27 +203,6 @@
     }
     return data as T;
   }
-  async function previewCardImport() {
-    error = ''; notice = ''; busy = true;
-    try {
-      if (!cardImportFile) throw Error('Escolha uma fatura em PDF.');
-      const form = new FormData(); form.append('file', cardImportFile);
-      const headers: Record<string, string> = {}; if (user) headers['X-CSRF-Token'] = user.csrf;
-      const res = await fetch('/api/v1/card-imports/preview', { method: 'POST', headers, credentials: 'same-origin', body: form });
-      const data = await res.json(); if (!res.ok) throw Error(data.error || 'Não foi possível ler a fatura.');
-      cardImport = data; if (!cardImportAccount) cardImportAccount = String(accounts[0]?.id || '');
-      notice = `${data.lines.length} lançamentos encontrados. Revise antes de confirmar.`;
-    } catch (e) { error = (e as Error).message; } finally { busy = false; }
-  }
-  async function confirmCardImport() {
-    error = ''; busy = true;
-    try {
-      if (!cardImport || !cardImportAccount) throw Error('Escolha a conta que receberá os lançamentos.');
-      await api('/card-imports/confirm', 'POST', { import_id: cardImport.id, account_id: Number(cardImportAccount), category_id: cardImportCategory ? Number(cardImportCategory) : null });
-      notice = `${cardImport.lines.length} lançamentos importados para ${cardImport.institution === 'picpay' ? 'PicPay' : 'Nubank'}.`;
-      cardImport = null; cardImportFile = null; await load();
-    } catch (e) { error = (e as Error).message; } finally { busy = false; }
-  }
   onMount(async () => {
     try {
       const config = await api<{ demo: boolean }>('/config');
@@ -318,6 +291,11 @@
     if (!cardName.trim()) throw Error('Informe um nome para o cartão.');
     await api('/cards', 'POST', { institution: cardInstitution, name: cardName.trim(), last4: cardLast4.trim() });
     cardName = ''; cardLast4 = ''; cards = await api<Card[]>('/cards'); notice = 'Cartão cadastrado.';
+  }
+  async function importCSV() {
+    if (!csvFile || !csvAccount) throw Error('Escolha o CSV e a conta.');
+    busy = true; error = ''; notice = '';
+    try { const form=new FormData(); form.append('file',csvFile); form.append('account_id',csvAccount); if(csvCategory) form.append('category_id',csvCategory); const headers:Record<string,string>={}; if(user) headers['X-CSRF-Token']=user.csrf; const res=await fetch('/api/v1/imports/csv',{method:'POST',headers,credentials:'same-origin',body:form}); const data=await res.json(); if(!res.ok) throw Error(data.error||'Falha ao importar CSV.'); notice=`${data.inserted} lançamentos importados; ${data.skipped} duplicados ignorados.`; csvFile=null; await load(); } catch(e){ error=(e as Error).message; } finally { busy=false; }
   }
   async function saveReferenceIncomes() {
     if (!sharingSummary) return;
@@ -1697,6 +1675,15 @@
             </form>
             {#if cards.length}<div class="card-list">{#each cards as card}<div class="card-list-row"><Icon name="wallet" size={18} /><strong>{card.name}</strong><span>{card.institution === 'mercado_pago' ? 'Mercado Pago' : card.institution === 'picpay' ? 'PicPay' : 'Nubank'}{card.last4 ? ` · final ${card.last4}` : ''}</span></div>{/each}</div>{/if}
           </section>
+          <section class="panel card-registration">
+            <div class="panel-heading"><div><h2>Importar CSV</h2><p>Formato: data, estabelecimento, valor.</p></div><Icon name="arrow" /></div>
+            <form onsubmit={(e) => { e.preventDefault(); void importCSV(); }} class="inline-card-form">
+              <label>Arquivo CSV<input type="file" accept=".csv,text/csv" onchange={(e) => csvFile = (e.currentTarget as HTMLInputElement).files?.[0] || null} /></label>
+              <label>Conta<select bind:value={csvAccount}><option value="">Escolha</option>{#each accounts as a}<option value={String(a.id)}>{a.name}</option>{/each}</select></label>
+              <label>Categoria<select bind:value={csvCategory}><option value="">Sem categoria</option>{#each categories.filter((c) => c.type === 'expense') as c}<option value={String(c.id)}>{c.name}</option>{/each}</select></label>
+              <button class="primary" disabled={busy || !csvFile || !csvAccount}>Importar CSV</button>
+            </form>
+          </section>
           <div class="context-note">
             <Icon name="info" size={18} /><span
               >O saldo inicial não entra como receita. Transferências entre suas
@@ -1859,23 +1846,6 @@
                   <p>Crie sua primeira meta.</p>
                 </div>{/each}
             </section>
-          </div>{/if}
-        {#if page === 'card-import'}<div class="planning-grid card-import-grid">
-            <section class="panel">
-              <div class="panel-heading"><div><h2>Importar fatura</h2><p>PicPay e Nubank · revise antes de confirmar.</p></div><Icon name="wallet" /></div>
-              <label>Arquivo PDF<input type="file" accept="application/pdf" onchange={(e) => cardImportFile = (e.currentTarget as HTMLInputElement).files?.[0] || null} /></label>
-              <button class="primary" disabled={busy || !cardImportFile} onclick={() => void previewCardImport()}><Icon name="search" size={16} />{busy ? 'Lendo fatura…' : 'Ler fatura'}</button>
-              {#if error}<p class="form-error">{error}</p>{/if}
-              {#if notice}<p class="form-success">{notice}</p>{/if}
-              {#if cardImport}<div class="import-summary"><strong>{cardImport.institution === 'picpay' ? 'PicPay' : 'Nubank'} · {cardImport.filename}</strong><span>{cardImport.lines.length} lançamentos · {money(cardImport.total_cents)}</span></div>{/if}
-            </section>
-            {#if cardImport}<section class="panel">
-              <div class="panel-heading"><div><h2>Revisar lançamentos</h2><p>Confira os itens antes de inserir.</p></div></div>
-              <div class="import-lines">{#each cardImport.lines as line}<div class="import-line"><span>{dateLabel(line.date)}</span><strong>{line.description}</strong><small>{line.card_last4 ? `cartão final ${line.card_last4}` : ''}{line.installment ? ` · ${line.installment}` : ''}</small><b>{money(line.amount_cents)}</b></div>{/each}</div>
-              <label>Conta<select bind:value={cardImportAccount}>{#each accounts as a}<option value={String(a.id)}>{a.name}</option>{/each}</select></label>
-              <label>Categoria (opcional)<select bind:value={cardImportCategory}><option value="">Sem categoria</option>{#each categories.filter((c) => c.type === 'expense') as c}<option value={String(c.id)}>{c.name}</option>{/each}</select></label>
-              <button class="primary" disabled={busy} onclick={() => void confirmCardImport()}><Icon name="check" size={16} />Confirmar importação</button>
-            </section>{/if}
           </div>{/if}
         {#if page === 'settings'}<div class="settings-grid">
             <section class="panel">

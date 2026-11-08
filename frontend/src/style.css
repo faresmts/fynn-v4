@@ -1097,6 +1097,7 @@ footer .green-dot {
 input[type='file'] { padding:10px; }
 .form-error { color:#ff9b9b; margin:12px 0 0; font-size:13px; }
 .form-success { color:var(--accent); margin:12px 0 0; font-size:13px; }
+.card-import-grid > .panel:first-child > .primary { margin-top: 16px; }
 .card-registration { margin-top: 18px; }
 .inline-card-form { display:grid; grid-template-columns:160px minmax(180px,1fr) 120px auto; gap:12px; align-items:end; }
 .card-list { margin-top:18px; border-top:1px solid var(--line); }
