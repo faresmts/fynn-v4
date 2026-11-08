@@ -57,7 +57,17 @@
     goalVisibility = $state('household');
   let contributionGoalId = $state<number | null>(null),
     contributionAmount = $state('');
-  let settlementReceiverId = $state<number | null>(null), settlementAmount = $state(''), settlementNote = $state('');
+  type CardImportLine = { id: number; date: string; description: string; amount_cents: number; card_last4?: string; installment?: string };
+  type CardImportPreview = { id: number; institution: string; filename: string; statement_month: string; lines: CardImportLine[]; total_cents: number };
+  let cardImport = $state<CardImportPreview | null>(null),
+    cardImportFile = $state<File | null>(null),
+    cardImportAccount = $state(''),
+    cardImportCategory = $state('');
+  type Card = { id: number; institution: string; name: string; last4?: string; active: boolean };
+  let cards = $state<Card[]>([]), cardInstitution = $state('picpay'), cardName = $state(''), cardLast4 = $state('');
+  let settlementReceiverId = $state<number | null>(null),
+    settlementAmount = $state(''),
+    settlementNote = $state('');
   let dialog: HTMLDialogElement;
   let modal = $state(''),
     selected = $state<Transaction | null>(null),
@@ -91,6 +101,7 @@
     { id: 'recurring', name: 'Despesas fixas', icon: 'repeat' },
     { id: 'household', name: 'Nossa casa', icon: 'home' },
     { id: 'planning', name: 'Metas e planejamento', icon: 'spark' },
+    { id: 'card-import', name: 'Importar fatura', icon: 'upload' },
     { id: 'reports', name: 'Relatórios', icon: 'chart' },
   ];
   const palette = [
@@ -198,6 +209,27 @@
     }
     return data as T;
   }
+  async function previewCardImport() {
+    error = ''; notice = ''; busy = true;
+    try {
+      if (!cardImportFile) throw Error('Escolha uma fatura em PDF.');
+      const form = new FormData(); form.append('file', cardImportFile);
+      const headers: Record<string, string> = {}; if (user) headers['X-CSRF-Token'] = user.csrf;
+      const res = await fetch('/api/v1/card-imports/preview', { method: 'POST', headers, credentials: 'same-origin', body: form });
+      const data = await res.json(); if (!res.ok) throw Error(data.error || 'Não foi possível ler a fatura.');
+      cardImport = data; if (!cardImportAccount) cardImportAccount = String(accounts[0]?.id || '');
+      notice = `${data.lines.length} lançamentos encontrados. Revise antes de confirmar.`;
+    } catch (e) { error = (e as Error).message; } finally { busy = false; }
+  }
+  async function confirmCardImport() {
+    error = ''; busy = true;
+    try {
+      if (!cardImport || !cardImportAccount) throw Error('Escolha a conta que receberá os lançamentos.');
+      await api('/card-imports/confirm', 'POST', { import_id: cardImport.id, account_id: Number(cardImportAccount), category_id: cardImportCategory ? Number(cardImportCategory) : null });
+      notice = `${cardImport.lines.length} lançamentos importados para ${cardImport.institution === 'picpay' ? 'PicPay' : 'Nubank'}.`;
+      cardImport = null; cardImportFile = null; await load();
+    } catch (e) { error = (e as Error).message; } finally { busy = false; }
+  }
   onMount(async () => {
     try {
       const config = await api<{ demo: boolean }>('/config');
@@ -239,7 +271,7 @@
     error = '';
     try {
       const q = `?month=${month}&context=${context}`;
-      const [d, a, c, t, rs, incomes, summary, settlementsData, goalsData] =
+      const [d, a, c, t, rs, incomes, summary, settlementsData, goalsData, cardsData] =
         await Promise.all([
           api<Dashboard>('/dashboard' + q),
           api<Account[]>('/accounts'),
@@ -254,11 +286,13 @@
           api<SharingSummary>('/sharing/summary' + `?month=${month}`),
           api<Settlement[]>('/settlements' + `?month=${month}`),
           api<Goal[]>('/goals'),
+          api<Card[]>('/cards'),
         ]);
       if (seq !== loadSequence) return;
       dashboard = d;
       dateToday = d.today;
       accounts = a;
+      cards = cardsData;
       categories = c;
       transactions = t.items;
       total = t.total;
@@ -279,6 +313,11 @@
     } finally {
       if (seq === loadSequence) loading = false;
     }
+  }
+  async function createCard() {
+    if (!cardName.trim()) throw Error('Informe um nome para o cartão.');
+    await api('/cards', 'POST', { institution: cardInstitution, name: cardName.trim(), last4: cardLast4.trim() });
+    cardName = ''; cardLast4 = ''; cards = await api<Card[]>('/cards'); notice = 'Cartão cadastrado.';
   }
   async function saveReferenceIncomes() {
     if (!sharingSummary) return;
@@ -343,11 +382,27 @@
   }
   async function createSettlement() {
     if (!settlementReceiverId || !user) return;
-    busy = true; error = '';
+    busy = true;
+    error = '';
     try {
-      await api('/settlements','POST',{sender_id:user.id,receiver_id:settlementReceiverId,amount_cents:cents(settlementAmount),month,settled_on:dateToday,note:settlementNote});
-      settlementAmount=''; settlementNote=''; settlementReceiverId=null; notice='Acerto registrado.'; await load();
-    } catch(e){error=(e as Error).message} finally{busy=false}
+      await api('/settlements', 'POST', {
+        sender_id: user.id,
+        receiver_id: settlementReceiverId,
+        amount_cents: cents(settlementAmount),
+        month,
+        settled_on: dateToday,
+        note: settlementNote,
+      });
+      settlementAmount = '';
+      settlementNote = '';
+      settlementReceiverId = null;
+      notice = 'Acerto registrado.';
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
   }
   function navigate(id: string) {
     page = id;
@@ -1007,12 +1062,49 @@
           {/if}
           {#if context === 'household' && sharingSummary && sharingSummary.people.length > 1}
             <section class="panel settlement-form-panel">
-              <div class="panel-heading"><div><h2>Registrar acerto</h2><p>Registre uma transferência entre moradores. Ela não altera as despesas da casa.</p></div><Icon name="arrows" /></div>
-              <form class="settlement-form" onsubmit={(e)=>{e.preventDefault();void createSettlement()}}>
-                <label>Quem recebe<select bind:value={settlementReceiverId} required><option value={null} disabled>Selecione o morador</option>{#each sharingSummary.people.filter((p)=>p.id !== user?.id) as person}<option value={person.id}>{person.name}</option>{/each}</select></label>
-                <label>Valor do acerto (R$)<input bind:value={settlementAmount} inputmode="decimal" placeholder="0,00" required /></label>
-                <label>Observação (opcional)<input bind:value={settlementNote} maxlength="200" placeholder="Acerto das contas de novembro" /></label>
-                <button class="primary" disabled={busy || !settlementReceiverId}><Icon name="check" size={16}/>Registrar acerto</button>
+              <div class="panel-heading">
+                <div>
+                  <h2>Registrar acerto</h2>
+                  <p>
+                    Registre uma transferência entre moradores. Ela não altera
+                    as despesas da casa.
+                  </p>
+                </div>
+                <Icon name="arrows" />
+              </div>
+              <form
+                class="settlement-form"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  void createSettlement();
+                }}
+              >
+                <label
+                  >Quem recebe<select bind:value={settlementReceiverId} required
+                    ><option value={null} disabled>Selecione o morador</option
+                    >{#each sharingSummary.people.filter((p) => p.id !== user?.id) as person}<option
+                        value={person.id}>{person.name}</option
+                      >{/each}</select
+                  ></label
+                >
+                <label
+                  >Valor do acerto (R$)<input
+                    bind:value={settlementAmount}
+                    inputmode="decimal"
+                    placeholder="0,00"
+                    required
+                  /></label
+                >
+                <label
+                  >Observação (opcional)<input
+                    bind:value={settlementNote}
+                    maxlength="200"
+                    placeholder="Acerto das contas de novembro"
+                  /></label
+                >
+                <button class="primary" disabled={busy || !settlementReceiverId}
+                  ><Icon name="check" size={16} />Registrar acerto</button
+                >
               </form>
             </section>
           {/if}
@@ -1595,6 +1687,16 @@
                 >
               </section>{/each}
           </div>
+          <section class="panel card-registration">
+            <div class="panel-heading"><div><h2>Cartões</h2><p>Cadastre os cartões usados nas faturas e importações.</p></div><Icon name="wallet" /></div>
+            <form onsubmit={(e) => { e.preventDefault(); void createCard(); }} class="inline-card-form">
+              <label>Instituição<select bind:value={cardInstitution}><option value="picpay">PicPay</option><option value="nubank">Nubank</option><option value="mercado_pago">Mercado Pago</option></select></label>
+              <label>Nome do cartão<input bind:value={cardName} placeholder="Ex.: PicPay principal" required /></label>
+              <label>Final do cartão<input bind:value={cardLast4} inputmode="numeric" maxlength="4" placeholder="0000" /></label>
+              <button class="primary" disabled={busy}><Icon name="plus" size={16} />Cadastrar</button>
+            </form>
+            {#if cards.length}<div class="card-list">{#each cards as card}<div class="card-list-row"><Icon name="wallet" size={18} /><strong>{card.name}</strong><span>{card.institution === 'mercado_pago' ? 'Mercado Pago' : card.institution === 'picpay' ? 'PicPay' : 'Nubank'}{card.last4 ? ` · final ${card.last4}` : ''}</span></div>{/each}</div>{/if}
+          </section>
           <div class="context-note">
             <Icon name="info" size={18} /><span
               >O saldo inicial não entra como receita. Transferências entre suas
@@ -1757,6 +1859,23 @@
                   <p>Crie sua primeira meta.</p>
                 </div>{/each}
             </section>
+          </div>{/if}
+        {#if page === 'card-import'}<div class="planning-grid card-import-grid">
+            <section class="panel">
+              <div class="panel-heading"><div><h2>Importar fatura</h2><p>PicPay e Nubank · revise antes de confirmar.</p></div><Icon name="wallet" /></div>
+              <label>Arquivo PDF<input type="file" accept="application/pdf" onchange={(e) => cardImportFile = (e.currentTarget as HTMLInputElement).files?.[0] || null} /></label>
+              <button class="primary" disabled={busy || !cardImportFile} onclick={() => void previewCardImport()}><Icon name="search" size={16} />{busy ? 'Lendo fatura…' : 'Ler fatura'}</button>
+              {#if error}<p class="form-error">{error}</p>{/if}
+              {#if notice}<p class="form-success">{notice}</p>{/if}
+              {#if cardImport}<div class="import-summary"><strong>{cardImport.institution === 'picpay' ? 'PicPay' : 'Nubank'} · {cardImport.filename}</strong><span>{cardImport.lines.length} lançamentos · {money(cardImport.total_cents)}</span></div>{/if}
+            </section>
+            {#if cardImport}<section class="panel">
+              <div class="panel-heading"><div><h2>Revisar lançamentos</h2><p>Confira os itens antes de inserir.</p></div></div>
+              <div class="import-lines">{#each cardImport.lines as line}<div class="import-line"><span>{dateLabel(line.date)}</span><strong>{line.description}</strong><small>{line.card_last4 ? `cartão final ${line.card_last4}` : ''}{line.installment ? ` · ${line.installment}` : ''}</small><b>{money(line.amount_cents)}</b></div>{/each}</div>
+              <label>Conta<select bind:value={cardImportAccount}>{#each accounts as a}<option value={String(a.id)}>{a.name}</option>{/each}</select></label>
+              <label>Categoria (opcional)<select bind:value={cardImportCategory}><option value="">Sem categoria</option>{#each categories.filter((c) => c.type === 'expense') as c}<option value={String(c.id)}>{c.name}</option>{/each}</select></label>
+              <button class="primary" disabled={busy} onclick={() => void confirmCardImport()}><Icon name="check" size={16} />Confirmar importação</button>
+            </section>{/if}
           </div>{/if}
         {#if page === 'settings'}<div class="settings-grid">
             <section class="panel">

@@ -7,3 +7,6 @@ backend/server
 *.sqlite*
 coverage.out
 __pycache__/
+.tools
+backend/.gocache
+backend/.gomodcache

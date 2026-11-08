@@ -21,6 +21,8 @@ func (a *App) Handler(frontend string) http.Handler {
 	m.HandleFunc("GET /api/v1/me", a.authenticated(func(w http.ResponseWriter, r *http.Request, u User) { reply(w, 200, u) }))
 	m.HandleFunc("GET /api/v1/accounts", a.authenticated(a.accounts))
 	m.HandleFunc("POST /api/v1/accounts", a.authenticated(a.createAccount))
+	m.HandleFunc("GET /api/v1/cards", a.authenticated(a.cards))
+	m.HandleFunc("POST /api/v1/cards", a.authenticated(a.createCard))
 	m.HandleFunc("GET /api/v1/categories", a.authenticated(a.categories))
 	m.HandleFunc("POST /api/v1/categories", a.authenticated(a.createCategory))
 	m.HandleFunc("GET /api/v1/transactions", a.authenticated(a.transactions))
@@ -41,6 +43,8 @@ func (a *App) Handler(frontend string) http.Handler {
 	m.HandleFunc("GET /api/v1/goals", a.authenticated(a.goals))
 	m.HandleFunc("POST /api/v1/goals", a.authenticated(a.createGoal))
 	m.HandleFunc("POST /api/v1/goals/{id}/contributions", a.authenticated(a.contributeGoal))
+	m.HandleFunc("POST /api/v1/card-imports/preview", a.authenticated(a.cardImportPreview))
+	m.HandleFunc("POST /api/v1/card-imports/confirm", a.authenticated(a.cardImportConfirm))
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "Recurso não encontrado.") })
 	fs := http.FileServer(http.Dir(frontend))
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
