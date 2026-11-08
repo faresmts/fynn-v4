@@ -1,6 +1,7 @@
 <script lang="ts">
   let { name, size = 20 }: { name: string; size?: number } = $props();
   const paths: Record<string, string> = {
+    fuel: 'M3 21h11M5 21V3h8v18M5 10h8m0 3h2a2 2 0 0 1 2 2v2a2 2 0 0 0 4 0V9l-4-4',
     grid: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
     arrows: 'M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4',
     wallet:

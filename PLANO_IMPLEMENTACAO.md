@@ -291,6 +291,8 @@ Criar meta mensal de economia e objetivos individuais/familiares com nome, alvo,
 
 ## 8. v1.1 — Cartões e CSV
 
+As compras de todos os cartões entram pela importação da fatura CSV, inclusive quando o usuário prepara o arquivo por conta própria. A próxima entrega é reconhecer créditos e estornos na prévia, descontá-los do saldo da fatura e ajustar o rateio de compras compartilhadas pelas cotas originais.
+
 ### Cadastro e operação — RF06
 
 | Campo | Exemplo |
@@ -328,7 +330,7 @@ Etapas:
 3. Suportar um ou dois bancos utilizados pelo casal e um formato genérico configurável.
 4. Normalizar datas, separadores decimais, descrições, sinais de crédito/débito e parcelas.
 5. Exibir data, descrição, valor, categoria sugerida, número da parcela, alertas e ação por linha.
-6. Permitir corrigir, ignorar, vincular a lançamento manual ou criar nova compra/parcela.
+6. Permitir revisar as linhas e conciliar com itens já importados.
 7. Mostrar total a importar e divergência com o total da fatura; considerar tarifas, créditos e pagamentos separadamente.
 8. Confirmar lote com transação de banco e registrar resultado por linha.
 
@@ -350,15 +352,15 @@ A convenção de sinal acima considera valor positivo como débito; cada adaptad
 - Tratar compras iguais no mesmo dia como possíveis transações legítimas; sem ID estável, similaridade sugere conciliação, não exclusão silenciosa.
 - Persistir vínculo entre linha importada e lançamento existente.
 - Garantir idempotência de confirmação e reenvio do mesmo lote.
-- Para compra manual parcelada, vincular à parcela existente; não gerar novamente todas as parcelas a cada fatura importada.
+- Identificar cada parcela na fatura correspondente e preservar o vínculo ao reimportar o arquivo.
 
-**Aceite:** reimportar o mesmo CSV não duplica dados; conciliar compra manual; parcelas nas faturas corretas; pagar fatura sem duplicar despesas; filtrar um cartão ou todos no dashboard.
+**Aceite:** reimportar o mesmo CSV preserva as compras e parcelas nas faturas corretas. Pagar a fatura gera uma única saída. O dashboard permite filtrar um cartão ou todos.
 
 ## 9. v1.2 — Combustível e financiamentos
 
 ### Combustível — RF08
 
-Cadastrar veículos, rendimento médio em km/L, combustível, preço por litro e data de referência. Salvar trajetos com distância de um trecho, indicação de ida e volta, frequência, dias do mês e veículo.
+Salvar por pessoa e mês o rendimento médio do veículo em km/L, o preço por litro e os trajetos com distância de ida, opção de incluir a volta e número de ocorrências no mês.
 
 ```text
 km_mensais_rota = distância_por_trecho × trechos_por_ocorrência × ocorrências_no_mês
@@ -375,11 +377,7 @@ Exemplo: 20 km por trecho, ida e volta, 22 dias, 10 km/L e R$ 6,00/L:
 88 × 6 = R$ 528,00/mês
 ```
 
-Usar calendário real para frequências semanais; permitir feriados, férias e ajuste manual. Evitar multiplicar por dois uma distância já informada como ida e volta. Validar rendimento maior que zero, distâncias e preços válidos. Usar precisão decimal nas medidas e arredondar o custo final em centavos.
-
-Permitir vários trajetos, comparação entre estimado e abastecimentos reais e simulação de preço/rendimento. Distâncias são informadas manualmente: não há dependência de API de mapas.
-
-**Previsão é orçamento, não gasto realizado.** Registrar abastecimentos separadamente; o simulador não cria despesas automaticamente.
+Informar as ocorrências diretamente para o mês escolhido. Somar as distâncias de todos os trajetos e arredondar o custo mensal final em centavos. A previsão é um dado de planejamento pessoal.
 
 ### Financiamentos — RF09
 
@@ -419,7 +417,7 @@ Limites iniciais propostos: **10 MB, 100 páginas e 30 segundos por extração**
 
 Manter adaptadores versionados e amostras sintéticas ou anonimizadas. Validar totais e sinalizar ambiguidades. Não aceitar automaticamente uma extração só porque encontrou valores monetários.
 
-**Aceite:** PDF suportado produz as mesmas entidades do CSV; compra manual gera sugestão de conciliação; arquivo inválido não bloqueia o serviço; revisão precede qualquer gravação financeira; temporários são removidos.
+**Aceite:** PDF suportado produz as mesmas entidades do CSV; compra já importada gera sugestão de conciliação; arquivo inválido não bloqueia o serviço; revisão precede qualquer gravação financeira; temporários são removidos.
 
 ## 11. v2.0 — Telegram e automações
 
@@ -472,7 +470,7 @@ Modelo lógico organizado por domínios. As entidades poderão ser consolidadas 
 | Cartões | `credit_cards`, `card_purchases`, `card_installments`, `card_statements` | Compras, parcelas e obrigações |
 | Importações | `imports`, `import_rows`, `import_matches` | Lotes, revisão, deduplicação e vínculos |
 | Metas | `savings_goals`, `goal_contributions`, `monthly_savings_targets` | Reservas e objetivos |
-| Combustível | `vehicles`, `routes`, `route_schedules`, `fuel_price_history` | Veículos, trajetos e hipóteses de previsão |
+| Combustível | `fuel_forecasts` | Trajetos e parâmetros de previsão por pessoa e mês |
 | Financiamentos | `loans`, `loan_installments`, `loan_payments` | Contratos, cronogramas e amortizações |
 | Integrações e auditoria | `telegram_links`, `integration_updates`, `outbox`, `audit_events` | Identidades externas, idempotência, respostas e histórico |
 
@@ -608,7 +606,7 @@ Prefixo `/api/v1`; payloads JSON, datas ISO, centavos inteiros, paginação e er
 | Metas | `/goals`, `/goals/{id}/contributions`, `/monthly-savings-targets` |
 | Cartões | `/cards`, `/cards/{id}/statements`, `/card-purchases` |
 | Importação | `POST /imports`, `GET /imports/{id}`, `POST /imports/{id}/confirm` |
-| Combustível | `/vehicles`, `/routes`, `/fuel/forecast` |
+| Combustível | `/fuel/forecast/{month}` | 
 | Financiamentos | `/loans`, `/loans/{id}/payments` |
 | Relatórios | `/reports/monthly`, `/dashboard` |
 | Telegram | `POST /webhooks/telegram` fora do prefixo, com autenticação própria |
@@ -852,7 +850,6 @@ Executar ensaio antes do primeiro uso real, mensalmente no início e após mudan
 | Compra R$ 900,00 em 3 vezes | Três parcelas de R$ 300,00, sem total duplicado | v1.1 |
 | Compra e pagamento de fatura R$ 200,00 | Consumo total R$ 200,00; caixa na liquidação | v1.1 |
 | Importar mesmo CSV duas vezes | Não cria novos lançamentos | v1.1 |
-| Compra manual aparece em fatura | Sugere conciliação e preserva vínculo | v1.1 |
 | Duas compras iguais legítimas | Não elimina automaticamente uma delas | v1.1 |
 | Reenvio da confirmação do lote | Efeito financeiro único | v1.1 |
 | Estorno de compra compartilhada | Reverte cotas originais | v1.1 |

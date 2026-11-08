@@ -45,6 +45,8 @@ func (a *App) Handler(frontend string) http.Handler {
 	m.HandleFunc("POST /api/v1/settlements", a.authenticated(a.createSettlement))
 	m.HandleFunc("DELETE /api/v1/settlements/{id}", a.authenticated(a.deleteSettlement))
 	m.HandleFunc("GET /api/v1/goals", a.authenticated(a.goals))
+	m.HandleFunc("GET /api/v1/fuel/forecast/{month}", a.authenticated(a.fuelForecast))
+	m.HandleFunc("PUT /api/v1/fuel/forecast/{month}", a.authenticated(a.fuelForecast))
 	m.HandleFunc("POST /api/v1/goals", a.authenticated(a.createGoal))
 	m.HandleFunc("POST /api/v1/goals/{id}/contributions", a.authenticated(a.contributeGoal))
 	m.HandleFunc("POST /api/v1/imports/csv", a.authenticated(a.csvImport(false)))

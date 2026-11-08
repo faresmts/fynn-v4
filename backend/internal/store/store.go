@@ -27,7 +27,7 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 8 {
+	if version > 9 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported schema version %d", version)
 	}
@@ -303,6 +303,23 @@ CREATE VIEW household_cost_shares AS
  SELECT 'transaction' AS source,transaction_id AS id,participant_id,share_cents,basis FROM transaction_shares
  UNION ALL SELECT 'invoice',line_id,participant_id,share_cents,basis FROM invoice_line_shares;
 PRAGMA user_version=8;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+	}
+	if version <= 8 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`CREATE TABLE fuel_forecasts(owner_id INTEGER NOT NULL REFERENCES users(id),month TEXT NOT NULL,inputs TEXT NOT NULL,PRIMARY KEY(owner_id,month)); PRAGMA user_version=9;`)
 		if e != nil {
 			tx.Rollback()
 			db.Close()

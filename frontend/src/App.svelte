@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import Icon from './lib/Icon.svelte';
   import CardStatement from './lib/CardStatement.svelte';
+  import FuelForecast from './lib/FuelForecast.svelte';
   import type {
     User,
     Account,
@@ -111,6 +112,7 @@
     { id: 'recurring', name: 'Despesas fixas', icon: 'repeat' },
     { id: 'household', name: 'Nossa casa', icon: 'home' },
     { id: 'planning', name: 'Metas e planejamento', icon: 'spark' },
+    { id: 'fuel', name: 'Combustível', icon: 'fuel' },
     { id: 'reports', name: 'Relatórios', icon: 'chart' },
   ];
   const palette = [
@@ -833,10 +835,10 @@
                         ? 'Acompanhe somente os lançamentos compartilhados com a família.'
                         : page === 'reports'
                           ? 'Entenda seus hábitos e acompanhe sua evolução.'
-                          : 'Um espaço que funciona do seu jeito.'}
+                          : page === 'fuel' ? 'Estime o custo dos seus trajetos no mês.' : 'Um espaço que funciona do seu jeito.'}
             </p>
           </div>
-          {#if page !== 'settings' && page !== 'cards'}<button
+          {#if page !== 'settings' && page !== 'cards' && page !== 'fuel'}<button
               class="primary"
               onclick={() =>
                 openModal(
@@ -868,7 +870,7 @@
             >
           </div>{/if}
         {#if page !== 'settings' && page !== 'accounts' && page !== 'cards'}<div class="toolbar">
-            {#if page !== 'recurring'}<div class="segmented">
+            {#if page === 'fuel'}<span>Mês da previsão</span>{:else if page !== 'recurring'}<div class="segmented">
                 <button
                   class:chosen={context === 'personal'}
                   onclick={() => {
@@ -1802,6 +1804,7 @@
               válido. Confirme o valor real ao pagar a ocorrência em Transações.</span
             >
           </div>{/if}
+        {#if page === 'fuel' && month}{#key month}<FuelForecast {month} {api} {money} />{/key}{/if}
         {#if page === 'planning'}<div class="planning-grid">
             <section class="panel">
               <div class="panel-heading">
