@@ -1132,6 +1132,11 @@ input[type='file'] { padding:10px; }
 .statement-heading h1 { overflow-wrap: anywhere; }
 .statement-heading p { margin-top: 4px; }
 .statement-heading label { margin: 0; }
+.overview-invoices { margin-bottom: 20px; }
+.overview-invoices .panel-heading { flex-wrap: wrap; gap: 12px; }
+.overview-invoices dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 175px), 1fr)); gap: 16px; margin: 0; }
+.overview-invoices dt { color: var(--muted); }
+.overview-invoices dd { margin: 5px 0 0; font-size: 1.25rem; font-weight: 600; }
 @media (max-width: 800px) { .inline-card-form { grid-template-columns: 1fr; } }
 @media (max-width: 600px) {
   .statement-heading-row { grid-template-columns: minmax(0, 1fr); }

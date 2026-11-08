@@ -70,8 +70,20 @@ func TestHouseholdInvoiceSplit(t *testing.T) {
 	}
 	totals(0)
 	f.login("alex@test.local", "strong-test-password")
+	checkCards := func(due int64) {
+		t.Helper()
+		w := f.request("GET", "/api/v1/dashboard?month="+month, nil, "")
+		var v struct {
+			Cards []cardMonthTotal `json:"card_totals"`
+		}
+		if json.Unmarshal(w.Body.Bytes(), &v) != nil || len(v.Cards) != 1 || v.Cards[0] != (cardMonthTotal{ID: 1, Purchases: 10001, Shared: 10001, Due: due}) {
+			t.Fatal("resumo de cartões incorreto", v.Cards)
+		}
+	}
+	checkCards(10001)
 	if w := f.request("POST", "/api/v1/cards/1/invoice/pay", map[string]any{"month": month, "account_id": 1, "amount_cents": 10001}, ""); w.Code != 201 {
 		t.Fatal(w.Body.String())
 	}
 	totals(10001)
+	checkCards(0)
 }

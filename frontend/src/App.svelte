@@ -58,6 +58,14 @@
     goalVisibility = $state('household');
   let contributionGoalId = $state<number | null>(null),
     contributionAmount = $state('');
+  let overviewCard = $state(0);
+  const invoiceTotals = $derived((dashboard?.card_totals ?? [])
+    .filter(row => !overviewCard || row.card_id === overviewCard)
+    .reduce((sum, row) => ({
+      purchases: sum.purchases + row.purchase_cents,
+      shared: sum.shared + row.shared_cents,
+      due: sum.due + row.due_cents,
+    }), { purchases: 0, shared: 0, due: 0 }));
   type Card = { id: number; institution: string; name: string; last4?: string; active: boolean };
   const cardDetails = (card: Card) =>
     ({ mercado_pago: 'Mercado Pago', picpay: 'PicPay', nubank: 'Nubank' }[card.institution] ?? card.institution)
@@ -273,6 +281,7 @@
       dateToday = d.today;
       accounts = a;
       cards = cardsData;
+      if (!cards.some(c => c.id === overviewCard)) overviewCard = 0;
       categories = c;
       transactions = t.items;
       total = t.total;
@@ -909,6 +918,21 @@
             Carregando suas finanças…
           </div>{/if}
         {#if dashboard && (page === 'overview' || page === 'reports' || page === 'household')}
+          {#if page === 'overview' && context === 'personal' && dashboard.month === month}
+            <section class="panel overview-invoices">
+              <div class="panel-heading"><h2>Faturas de {monthLabel(month)}</h2>
+                <label>Cartão<select bind:value={overviewCard}>
+                  <option value={0}>Todos os cartões</option>
+                  {#each cards as c}<option value={c.id}>{c.name} · {cardDetails(c)}</option>{/each}
+                </select></label>
+              </div>
+              <dl>
+                <div><dt>Total das compras</dt><dd>{money(invoiceTotals.purchases)}</dd></div>
+                <div><dt>Compartilhado com a casa</dt><dd>{money(invoiceTotals.shared)}</dd></div>
+                <div><dt>Saldo a pagar</dt><dd>{money(invoiceTotals.due)}</dd></div>
+              </dl>
+            </section>
+          {/if}
           {#if context === 'household'}<div class="context-note">
               <Icon name="shield" size={17} /><span
                 >Somente lançamentos com visibilidade “Nossa casa”. Saldos

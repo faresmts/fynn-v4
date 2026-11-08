@@ -256,7 +256,15 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request, u User) {
 	if ctx == "household" {
 		totals = houseTotals
 	}
-	reply(w, 200, map[string]any{"month": month, "context": ctx, "totals": totals, "previous": summarize(items, t.AddDate(0, -1, 0).Format("2006-01")), "balance_cents": balance, "available_cents": available, "accounts": accounts, "history": history, "categories": categories, "recent": recent, "upcoming": upcoming, "contributors": contributors, "household_expenses": householdExpenses, "today": today()})
+	cardTotals := []cardMonthTotal{}
+	if ctx == "personal" {
+		cardTotals, e = a.cardMonthTotals(u, month)
+		if e != nil {
+			fail(w, 500, "Falha ao consultar as faturas.")
+			return
+		}
+	}
+	reply(w, 200, map[string]any{"card_totals": cardTotals, "month": month, "context": ctx, "totals": totals, "previous": summarize(items, t.AddDate(0, -1, 0).Format("2006-01")), "balance_cents": balance, "available_cents": available, "accounts": accounts, "history": history, "categories": categories, "recent": recent, "upcoming": upcoming, "contributors": contributors, "household_expenses": householdExpenses, "today": today()})
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request, u User) {
 	var x struct {

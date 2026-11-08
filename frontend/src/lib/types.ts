@@ -44,6 +44,7 @@ export type Totals = {
   cash_cents: number;
 };
 export type Dashboard = {
+  card_totals: { card_id: number; purchase_cents: number; shared_cents: number; due_cents: number }[];
   month: string;
   context: string;
   totals: Totals;

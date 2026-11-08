@@ -9,6 +9,35 @@ import (
 	"strconv"
 )
 
+type cardMonthTotal struct {
+	ID        int64 `json:"card_id"`
+	Purchases int64 `json:"purchase_cents"`
+	Shared    int64 `json:"shared_cents"`
+	Due       int64 `json:"due_cents"`
+}
+
+func (a *App) cardMonthTotals(u User, month string) ([]cardMonthTotal, error) {
+	rows, err := a.DB.Query(`SELECT c.id,sum(l.amount_cents),
+	sum(CASE WHEN s.line_id IS NOT NULL THEN l.amount_cents ELSE 0 END),
+	sum(CASE WHEN i.status='open' AND coalesce(t.status,'pending')!='paid' THEN l.amount_cents ELSE 0 END)
+	FROM cards c JOIN card_invoices i ON i.card_id=c.id JOIN card_installments l ON l.invoice_id=i.id
+	LEFT JOIN shared_invoice_lines s ON s.line_id=l.id LEFT JOIN transactions t ON t.id=l.transaction_id
+	WHERE c.owner_id=? AND c.household_id=? AND i.reference_month=? AND i.status!='cancelled' GROUP BY c.id`, u.ID, u.HouseholdID, month)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []cardMonthTotal{}
+	for rows.Next() {
+		var x cardMonthTotal
+		if err := rows.Scan(&x.ID, &x.Purchases, &x.Shared, &x.Due); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 type statementLine struct {
 	csvExpense
 	ID     int64 `json:"id"`
