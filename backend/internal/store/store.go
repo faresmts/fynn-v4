@@ -27,7 +27,7 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 5 {
+	if version > 8 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported schema version %d", version)
 	}
@@ -208,6 +208,101 @@ CREATE TABLE IF NOT EXISTS card_installments(
 CREATE INDEX IF NOT EXISTS card_invoice_period ON card_invoices(card_id,reference_month);
 CREATE INDEX IF NOT EXISTS card_installments_invoice ON card_installments(invoice_id);
 PRAGMA user_version=5;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+		version = 5
+	}
+	if version == 5 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`ALTER TABLE transactions ADD COLUMN card_id INTEGER REFERENCES cards(id); CREATE INDEX IF NOT EXISTS transactions_card ON transactions(card_id); PRAGMA user_version=6;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+		version = 6
+	}
+	if version == 6 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`
+ALTER TABLE cards ADD COLUMN clearing_account_id INTEGER REFERENCES accounts(id);
+ALTER TABLE card_invoices ADD COLUMN payment_transaction_id INTEGER REFERENCES transactions(id);
+CREATE UNIQUE INDEX invoice_payment ON card_invoices(payment_transaction_id);
+ALTER TABLE card_installments ADD COLUMN category_id INTEGER REFERENCES categories(id);
+CREATE TEMP VIEW legacy_card_lines AS
+ SELECT t.*, CASE WHEN status='pending' THEN strftime('%Y-%m','now','-3 hours') ELSE competence END AS statement_month
+ FROM transactions t WHERE card_id IS NOT NULL AND type='expense' AND status!='cancelled';
+INSERT INTO card_invoices(card_id,reference_month,due_date,total_cents)
+ SELECT DISTINCT card_id,statement_month,date(statement_month||'-01','+1 month','-1 day'),0
+ FROM legacy_card_lines WHERE true ON CONFLICT(card_id,reference_month) DO NOTHING;
+INSERT INTO card_installments(invoice_id,description,purchase_date,amount_cents,transaction_id,category_id)
+ SELECT i.id,t.description,t.date,t.amount_cents,t.id,t.category_id FROM legacy_card_lines t
+ JOIN card_invoices i ON i.card_id=t.card_id AND i.reference_month=t.statement_month
+ WHERE NOT EXISTS(SELECT 1 FROM card_installments l WHERE l.transaction_id=t.id);
+UPDATE card_invoices SET total_cents=(SELECT sum(amount_cents) FROM card_installments WHERE invoice_id=card_invoices.id),
+ status=CASE WHEN EXISTS(SELECT 1 FROM card_installments l LEFT JOIN transactions t ON t.id=l.transaction_id
+ WHERE l.invoice_id=card_invoices.id AND coalesce(t.status,'pending')!='paid') THEN 'open' ELSE 'paid' END
+ WHERE id IN (SELECT invoice_id FROM card_installments WHERE transaction_id IN (SELECT id FROM legacy_card_lines));
+DROP VIEW legacy_card_lines;
+PRAGMA user_version=7;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+	}
+	if version <= 7 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`
+CREATE TABLE shared_invoice_lines (
+ line_id INTEGER PRIMARY KEY REFERENCES card_installments(id), version INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE invoice_line_shares (
+ line_id INTEGER NOT NULL REFERENCES shared_invoice_lines(line_id),
+ participant_id INTEGER NOT NULL REFERENCES users(id), share_cents INTEGER NOT NULL CHECK(share_cents>=0),
+ basis TEXT NOT NULL CHECK(basis IN ('monthly_income_ratio','equal','custom')), PRIMARY KEY(line_id,participant_id)
+);
+CREATE VIEW household_costs AS
+ SELECT 'transaction' AS source,t.id,t.household_id,t.owner_id,t.competence,t.date,t.due_date,t.amount_cents,t.description,
+ coalesce(k.name,'Despesa') AS category,t.status,t.version
+ FROM transactions t LEFT JOIN categories k ON k.id=t.category_id
+ WHERE t.card_id IS NULL AND t.type='expense' AND t.visibility='household' AND t.status!='cancelled'
+ UNION ALL
+ SELECT 'invoice',l.id,c.household_id,c.owner_id,i.reference_month,l.purchase_date,i.due_date,l.amount_cents,l.description,
+ 'Fatura do cartão',CASE WHEN i.status='paid' OR t.status='paid' THEN 'paid' ELSE 'pending' END,s.version
+ FROM shared_invoice_lines s JOIN card_installments l ON l.id=s.line_id JOIN card_invoices i ON i.id=l.invoice_id
+ JOIN cards c ON c.id=i.card_id LEFT JOIN transactions t ON t.id=l.transaction_id WHERE i.status!='cancelled';
+CREATE VIEW household_cost_shares AS
+ SELECT 'transaction' AS source,transaction_id AS id,participant_id,share_cents,basis FROM transaction_shares
+ UNION ALL SELECT 'invoice',line_id,participant_id,share_cents,basis FROM invoice_line_shares;
+PRAGMA user_version=8;`)
 		if e != nil {
 			tx.Rollback()
 			db.Close()

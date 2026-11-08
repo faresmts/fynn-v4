@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import Icon from './lib/Icon.svelte';
+  import CardStatement from './lib/CardStatement.svelte';
   import type {
     User,
     Account,
@@ -58,14 +59,19 @@
   let contributionGoalId = $state<number | null>(null),
     contributionAmount = $state('');
   type Card = { id: number; institution: string; name: string; last4?: string; active: boolean };
+  const cardDetails = (card: Card) =>
+    ({ mercado_pago: 'Mercado Pago', picpay: 'PicPay', nubank: 'Nubank' }[card.institution] ?? card.institution)
+    + (card.last4 ? ' · final ' + card.last4 : '');
+  let selectedCard = $state<Card | null>(null);
+  let statementMonth = $state(localToday().slice(0,7));
   let cards = $state<Card[]>([]), cardInstitution = $state('picpay'), cardName = $state(''), cardLast4 = $state('');
-  let csvFile = $state<File | null>(null), csvAccount = $state(''), csvCategory = $state('');
   let settlementReceiverId = $state<number | null>(null),
     settlementAmount = $state(''),
     settlementNote = $state('');
   let dialog: HTMLDialogElement;
   let modal = $state(''),
-    selected = $state<Transaction | null>(null),
+    selected = $state<(Pick<Transaction, 'id' | 'version' | 'amount_cents' | 'description'> &
+      Partial<Pick<Transaction, 'expected_cents'>> & Partial<Pick<Dashboard['household_expenses'][number], 'source' | 'mode' | 'shares'>>) | null>(null),
     modalError = $state('');
   let amount = $state(''),
     description = $state(''),
@@ -92,6 +98,7 @@
   const nav = [
     { id: 'overview', name: 'Visão geral', icon: 'grid' },
     { id: 'transactions', name: 'Transações', icon: 'arrows' },
+    { id: 'cards', name: 'Meus cartões', icon: 'wallet' },
     { id: 'accounts', name: 'Minhas contas', icon: 'wallet' },
     { id: 'recurring', name: 'Despesas fixas', icon: 'repeat' },
     { id: 'household', name: 'Nossa casa', icon: 'home' },
@@ -288,14 +295,16 @@
     }
   }
   async function createCard() {
-    if (!cardName.trim()) throw Error('Informe um nome para o cartão.');
-    await api('/cards', 'POST', { institution: cardInstitution, name: cardName.trim(), last4: cardLast4.trim() });
-    cardName = ''; cardLast4 = ''; cards = await api<Card[]>('/cards'); notice = 'Cartão cadastrado.';
-  }
-  async function importCSV() {
-    if (!csvFile || !csvAccount) throw Error('Escolha o CSV e a conta.');
-    busy = true; error = ''; notice = '';
-    try { const form=new FormData(); form.append('file',csvFile); form.append('account_id',csvAccount); if(csvCategory) form.append('category_id',csvCategory); const headers:Record<string,string>={}; if(user) headers['X-CSRF-Token']=user.csrf; const res=await fetch('/api/v1/imports/csv',{method:'POST',headers,credentials:'same-origin',body:form}); const data=await res.json(); if(!res.ok) throw Error(data.error||'Falha ao importar CSV.'); notice=`${data.inserted} lançamentos importados; ${data.skipped} duplicados ignorados.`; csvFile=null; await load(); } catch(e){ error=(e as Error).message; } finally { busy=false; }
+    busy = true;
+    error = '';
+    try {
+      await api('/cards', 'POST', { institution: cardInstitution, name: cardName.trim(), last4: cardLast4.trim() });
+      cards = await api<Card[]>('/cards');
+      cardName = '';
+      cardLast4 = '';
+      notice = 'Cartão cadastrado.';
+    } catch (e) { error = (e as Error).message; }
+    finally { busy = false; }
   }
   async function saveReferenceIncomes() {
     if (!sharingSummary) return;
@@ -383,6 +392,7 @@
     }
   }
   function navigate(id: string) {
+    selectedCard = null;
     page = id;
     menu = false;
     offset = 0;
@@ -392,7 +402,7 @@
     categoryFilter = 'all';
     accountFilter = 'all';
     if (id === 'household') context = 'household';
-    else if (id === 'accounts' || id === 'recurring') context = 'personal';
+    else if (id === 'cards' || id === 'accounts' || id === 'recurring') context = 'personal';
     void load();
   }
   function changeMonth(delta: number) {
@@ -402,7 +412,18 @@
     offset = 0;
     void load();
   }
-  async function openModal(which: string, item: Transaction | null = null) {
+  function previewShares(total: number, summary: SharingSummary, equal: boolean) {
+    let allocated = 0;
+    return summary.people.map((person, i) => {
+      const base = equal ? Math.floor(total / summary.people.length)
+        : summary.total_income_cents > 0
+          ? Number(BigInt(total) * BigInt(person.income_cents) / BigInt(summary.total_income_cents)) : 0;
+      const part = i === summary.people.length - 1 ? total - allocated : base;
+      allocated += part;
+      return part;
+    });
+  }
+  async function openModal(which: string, item: typeof selected = null) {
     selected = item;
     modal = which;
     modalError = '';
@@ -418,11 +439,11 @@
     status = 'paid';
     visibility = 'private';
     day = 10;
-    splitMode = 'monthly_income_ratio';
+    splitMode = item?.mode ?? (sharingSummary?.status === 'ready' ? 'monthly_income_ratio' : 'equal');
     customShares = {};
     if (which === 'split' && sharingSummary) {
       for (const person of sharingSummary.people)
-        customShares[String(person.id)] = '';
+        customShares[String(person.id)] = item?.shares ? ((item.shares[person.id] ?? 0) / 100).toFixed(2).replace('.', ',') : '';
     }
     requestKey = crypto.randomUUID();
     await tick();
@@ -481,13 +502,13 @@
           starts_on: competence,
         });
       } else if (modal === 'split' && selected) {
-        const custom = Object.fromEntries(
+        const custom = splitMode === 'custom' ? Object.fromEntries(
           Object.entries(customShares).map(([id, value]) => [
             id,
             cents(value || '0'),
           ]),
-        );
-        await api(`/transactions/${selected.id}/split`, 'POST', {
+        ) : {};
+        await api(`/${selected.source === 'invoice' ? 'invoice-lines' : 'transactions'}/${selected.id}/split`, 'POST', {
           version: selected.version,
           mode: splitMode,
           custom_cents: custom,
@@ -761,7 +782,20 @@
         </div>
       </header>
       <main class="content" aria-busy={loading}>
-        <div class="page-heading">
+        {#if page === 'cards' && selectedCard}
+          <header class="statement-heading">
+            <button class="secondary statement-back" onclick={() => selectedCard = null}>
+              <Icon name="chevron" size={14} />Voltar aos cartões
+            </button>
+            <div class="statement-heading-row">
+              <div>
+                <h1>{selectedCard.name}</h1>
+                <p>{cardDetails(selectedCard)}</p>
+              </div>
+              <label>Mês da fatura<input type="month" bind:value={statementMonth} /></label>
+            </div>
+          </header>
+        {:else}<div class="page-heading">
           <div>
             <div class="eyebrow">
               {page === 'overview'
@@ -780,7 +814,9 @@
                 ? 'Vamos cuidar do que importa. Aqui está seu resumo financeiro.'
                 : page === 'transactions'
                   ? 'Tudo o que entra e sai, sem perder nenhum detalhe.'
-                  : page === 'accounts'
+                  : page === 'cards'
+                    ? 'Consulte as faturas e escolha a conta para pagamento.'
+                    : page === 'accounts'
                     ? 'Cada conta no seu lugar. Seu saldo sempre à vista.'
                     : page === 'recurring'
                       ? 'Organize os compromissos que fazem parte da sua rotina.'
@@ -791,7 +827,7 @@
                           : 'Um espaço que funciona do seu jeito.'}
             </p>
           </div>
-          {#if page !== 'settings'}<button
+          {#if page !== 'settings' && page !== 'cards'}<button
               class="primary"
               onclick={() =>
                 openModal(
@@ -807,7 +843,7 @@
                   ? 'Nova despesa fixa'
                   : 'Novo lançamento'}</button
             >{/if}
-        </div>
+        </div>{/if}
         {#if notice}<div class="alert success" role="status">
             <Icon name="check" size={17} /><span>{notice}</span><button
               class="icon-button"
@@ -822,7 +858,7 @@
               onclick={load}>Tentar novamente</button
             >
           </div>{/if}
-        {#if page !== 'settings' && page !== 'accounts'}<div class="toolbar">
+        {#if page !== 'settings' && page !== 'accounts' && page !== 'cards'}<div class="toolbar">
             {#if page !== 'recurring'}<div class="segmented">
                 <button
                   class:chosen={context === 'personal'}
@@ -876,7 +912,7 @@
           {#if context === 'household'}<div class="context-note">
               <Icon name="shield" size={17} /><span
                 >Somente lançamentos com visibilidade “Nossa casa”. Saldos
-                pessoais permanecem privados. Rateio e acertos chegam no MVP 2.</span
+                pessoais permanecem privados.</span
               >
             </div>{/if}
           {#if context === 'household' && sharingSummary}
@@ -953,9 +989,12 @@
                           ? 'Pago'
                           : `Vence ${dateLabel(expense.due_date)}`}</small
                       >
+                      <small>{expense.mode === 'equal' ? 'Divisão igual' : expense.mode === 'custom' ? 'Divisão manual' : 'Proporcional à renda'}
+                        · {sharingSummary?.people.map(p => p.name + ' ' + money(expense.shares[p.id] ?? 0)).join(' · ')}</small>
                     </div>
                     <strong class="amount">{money(expense.amount_cents)}</strong
                     >
+                    <button class="secondary small-button" onclick={() => openModal('split', expense)}>Alterar divisão</button>
                   </div>
                 {/each}
               </div>
@@ -1008,7 +1047,7 @@
               </div>
               <p class="form-hint">
                 <Icon name="info" size={14} /> O saldo compara quem pagou com a responsabilidade
-                rateada. Sem cotas salvas, a responsabilidade aparece como R$ 0,00.
+                rateada. A divisão inicial usa as rendas confirmadas do mês ou partes iguais.
               </p>
             </section>
           {/if}
@@ -1539,7 +1578,7 @@
                         class:positive={t.type === 'income'}
                         >{t.type === 'income'
                           ? '+'
-                          : t.type === 'expense'
+                          : t.type === 'expense' || t.invoice_payment
                             ? '−'
                             : ''}
                         {money(
@@ -1549,7 +1588,7 @@
                           >{/if}</td
                       ><td
                         ><div class="row-actions">
-                          {#if t.owner_id === user.id && t.status !== 'cancelled'}{#if t.status === 'pending'}<button
+                          {#if t.owner_id === user.id && !t.invoice_payment && t.status !== 'cancelled'}{#if t.status === 'pending'}<button
                                 class="icon-button"
                                 aria-label={`Pagar ${t.description}`}
                                 title="Confirmar pagamento"
@@ -1627,6 +1666,29 @@
               </div>
             </div>
           </section>{/if}
+        {#if page === 'cards' && selectedCard}
+          {#if statementMonth}{#key selectedCard.id + ':' + statementMonth}
+            <CardStatement card={selectedCard.id} month={statementMonth} {accounts} csrf={user.csrf} {api} {money} onChanged={load} />
+          {/key}{/if}
+        {/if}
+        {#if page === 'cards' && !selectedCard}<section class="panel card-registration">
+            <div class="panel-heading"><div><h2>Cartões</h2><p>Selecione um cartão para abrir a fatura.</p></div><Icon name="wallet" /></div>
+            <form onsubmit={(e) => { e.preventDefault(); void createCard(); }} class="inline-card-form">
+              <label>Instituição<select bind:value={cardInstitution}><option value="picpay">PicPay</option><option value="nubank">Nubank</option><option value="mercado_pago">Mercado Pago</option></select></label>
+              <label>Nome do cartão<input bind:value={cardName} placeholder="Ex.: PicPay principal" required /></label>
+              <label>Final do cartão<input bind:value={cardLast4} inputmode="numeric" maxlength="4" placeholder="0000" /></label>
+              <button class="primary" disabled={busy}><Icon name="plus" size={16} />Cadastrar</button>
+            </form>
+            {#if cards.length}<div class="card-list">
+              {#each cards as card}
+                <button class="secondary card-list-row" onclick={() => { statementMonth = dateToday.slice(0, 7); selectedCard = card; }}>
+                  <Icon name="wallet" size={20} />
+                  <span class="card-label"><strong>{card.name}</strong><small>{cardDetails(card)}</small></span>
+                  <Icon name="chevron" size={16} />
+                </button>
+              {/each}
+            </div>{/if}
+          </section>{/if}
         {#if page === 'accounts'}<div class="account-grid">
             {#each accounts as a, i}<article class="panel account-card">
                 <div class="account-top">
@@ -1665,30 +1727,10 @@
                 >
               </section>{/each}
           </div>
-          <section class="panel card-registration">
-            <div class="panel-heading"><div><h2>Cartões</h2><p>Cadastre os cartões usados nas faturas e importações.</p></div><Icon name="wallet" /></div>
-            <form onsubmit={(e) => { e.preventDefault(); void createCard(); }} class="inline-card-form">
-              <label>Instituição<select bind:value={cardInstitution}><option value="picpay">PicPay</option><option value="nubank">Nubank</option><option value="mercado_pago">Mercado Pago</option></select></label>
-              <label>Nome do cartão<input bind:value={cardName} placeholder="Ex.: PicPay principal" required /></label>
-              <label>Final do cartão<input bind:value={cardLast4} inputmode="numeric" maxlength="4" placeholder="0000" /></label>
-              <button class="primary" disabled={busy}><Icon name="plus" size={16} />Cadastrar</button>
-            </form>
-            {#if cards.length}<div class="card-list">{#each cards as card}<div class="card-list-row"><Icon name="wallet" size={18} /><strong>{card.name}</strong><span>{card.institution === 'mercado_pago' ? 'Mercado Pago' : card.institution === 'picpay' ? 'PicPay' : 'Nubank'}{card.last4 ? ` · final ${card.last4}` : ''}</span></div>{/each}</div>{/if}
-          </section>
-          <section class="panel card-registration">
-            <div class="panel-heading"><div><h2>Importar CSV</h2><p>Formato: data, estabelecimento, valor.</p></div><Icon name="arrow" /></div>
-            <form onsubmit={(e) => { e.preventDefault(); void importCSV(); }} class="inline-card-form">
-              <label>Arquivo CSV<input type="file" accept=".csv,text/csv" onchange={(e) => csvFile = (e.currentTarget as HTMLInputElement).files?.[0] || null} /></label>
-              <label>Conta<select bind:value={csvAccount}><option value="">Escolha</option>{#each accounts as a}<option value={String(a.id)}>{a.name}</option>{/each}</select></label>
-              <label>Categoria<select bind:value={csvCategory}><option value="">Sem categoria</option>{#each categories.filter((c) => c.type === 'expense') as c}<option value={String(c.id)}>{c.name}</option>{/each}</select></label>
-              <button class="primary" disabled={busy || !csvFile || !csvAccount}>Importar CSV</button>
-            </form>
-          </section>
           <div class="context-note">
             <Icon name="info" size={18} /><span
               >O saldo inicial não entra como receita. Transferências entre suas
-              contas não alteram o resultado do mês. Cartões fazem parte da
-              v1.1.</span
+              contas não alteram o resultado do mês.</span
             >
           </div>{/if}
         {#if page === 'recurring'}<section class="panel">
@@ -2010,25 +2052,14 @@
             <option value="monthly_income_ratio"
               >Proporcional à renda confirmada</option
             >
-            <option value="equal">50% para cada pessoa</option>
+            <option value="equal">Partes iguais</option>
             <option value="custom">Definir valores manualmente</option>
           </select>
         </label>
         {#if sharingSummary?.people.length}
           <div class="split-preview">
             {#each sharingSummary.people as person, index}
-              {@const proportional =
-                sharingSummary.status === 'ready'
-                  ? Math.floor(
-                      ((selected?.amount_cents || 0) * person.ratio_bps) /
-                        10000,
-                    )
-                  : 0}
-              {@const equal =
-                index === 0
-                  ? Math.floor((selected?.amount_cents || 0) / 2)
-                  : (selected?.amount_cents || 0) -
-                    Math.floor((selected?.amount_cents || 0) / 2)}
+              {@const share = previewShares(selected?.amount_cents ?? 0, sharingSummary, splitMode === 'equal')[index]}
               <label
                 >{person.name}
                 {#if splitMode === 'custom'}<input
@@ -2037,9 +2068,9 @@
                     placeholder="0,00"
                     aria-label={`Cota de ${person.name}`}
                   />{:else}<div class="split-amount">
-                    {money(splitMode === 'equal' ? equal : proportional)}<small
+                    {money(splitMode === 'monthly_income_ratio' && sharingSummary.status !== 'ready' ? null : share)}<small
                       >{splitMode === 'equal'
-                        ? '50,0%'
+                        ? (100 / sharingSummary.people.length).toFixed(1) + '%'
                         : `${(person.ratio_bps / 100).toFixed(1)}%`}</small
                     >
                   </div>{/if}

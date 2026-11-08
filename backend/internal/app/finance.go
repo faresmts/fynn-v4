@@ -25,25 +25,26 @@ type Category struct {
 	Type string `json:"type"`
 }
 type Transaction struct {
-	ID            int64   `json:"id"`
-	Type          string  `json:"type"`
-	Description   string  `json:"description"`
-	Amount        int64   `json:"amount_cents"`
-	Expected      int64   `json:"expected_cents"`
-	AccountID     int64   `json:"account_id"`
-	DestinationID *int64  `json:"destination_id"`
-	CategoryID    *int64  `json:"category_id"`
-	Date          string  `json:"date"`
-	Competence    string  `json:"competence"`
-	DueDate       string  `json:"due_date"`
-	Status        string  `json:"status"`
-	PaidDate      *string `json:"paid_date"`
-	Visibility    string  `json:"visibility"`
-	RuleID        *int64  `json:"recurring_rule_id"`
-	Version       int     `json:"version"`
-	Category      string  `json:"category"`
-	Account       string  `json:"account"`
-	OwnerID       int64   `json:"owner_id"`
+	InvoicePayment bool    `json:"invoice_payment"`
+	ID             int64   `json:"id"`
+	Type           string  `json:"type"`
+	Description    string  `json:"description"`
+	Amount         int64   `json:"amount_cents"`
+	Expected       int64   `json:"expected_cents"`
+	AccountID      int64   `json:"account_id"`
+	DestinationID  *int64  `json:"destination_id"`
+	CategoryID     *int64  `json:"category_id"`
+	Date           string  `json:"date"`
+	Competence     string  `json:"competence"`
+	DueDate        string  `json:"due_date"`
+	Status         string  `json:"status"`
+	PaidDate       *string `json:"paid_date"`
+	Visibility     string  `json:"visibility"`
+	RuleID         *int64  `json:"recurring_rule_id"`
+	Version        int     `json:"version"`
+	Category       string  `json:"category"`
+	Account        string  `json:"account"`
+	OwnerID        int64   `json:"owner_id"`
 }
 type TransactionInput struct {
 	Type          string  `json:"type"`
@@ -255,10 +256,10 @@ func (a *App) createTransaction(w http.ResponseWriter, r *http.Request, u User) 
 	reply(w, 201, map[string]int64{"id": id})
 }
 
-const transactionSelect = `SELECT t.id,t.type,t.description,t.amount_cents,t.expected_cents,t.account_id,t.destination_id,t.category_id,t.date,t.competence,t.due_date,t.status,t.paid_date,t.visibility,t.recurring_rule_id,t.version,COALESCE(c.name,'Transferência'),a.name,t.owner_id FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id `
+const transactionSelect = `SELECT t.id,t.type,t.description,t.amount_cents,t.expected_cents,t.account_id,t.destination_id,t.category_id,t.date,t.competence,t.due_date,t.status,t.paid_date,t.visibility,t.recurring_rule_id,t.version,CASE WHEN i.id IS NOT NULL THEN 'Pagamento de fatura' ELSE COALESCE(c.name,'Transferência') END,a.name,t.owner_id,i.id IS NOT NULL FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id LEFT JOIN card_invoices i ON i.payment_transaction_id=t.id `
 
 func (a *App) transactionList(u User, month, context string) ([]Transaction, error) {
-	query := transactionSelect + `WHERE t.household_id=? AND `
+	query := transactionSelect + `WHERE t.card_id IS NULL AND t.household_id=? AND `
 	args := []any{u.HouseholdID}
 	if context == "household" {
 		query += "t.visibility='household'"
@@ -279,7 +280,7 @@ func (a *App) transactionList(u User, month, context string) ([]Transaction, err
 	out := []Transaction{}
 	for rows.Next() {
 		var t Transaction
-		if e = rows.Scan(&t.ID, &t.Type, &t.Description, &t.Amount, &t.Expected, &t.AccountID, &t.DestinationID, &t.CategoryID, &t.Date, &t.Competence, &t.DueDate, &t.Status, &t.PaidDate, &t.Visibility, &t.RuleID, &t.Version, &t.Category, &t.Account, &t.OwnerID); e != nil {
+		if e = rows.Scan(&t.ID, &t.Type, &t.Description, &t.Amount, &t.Expected, &t.AccountID, &t.DestinationID, &t.CategoryID, &t.Date, &t.Competence, &t.DueDate, &t.Status, &t.PaidDate, &t.Visibility, &t.RuleID, &t.Version, &t.Category, &t.Account, &t.OwnerID, &t.InvoicePayment); e != nil {
 			return nil, e
 		}
 		if t.OwnerID != u.ID {
@@ -354,7 +355,7 @@ func (a *App) updateTransaction(w http.ResponseWriter, r *http.Request, u User) 
 	defer tx.Rollback()
 	var status, kind, opening string
 	var version int
-	e = tx.QueryRow("SELECT t.status,t.version,t.type,a.opening_date FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id=? AND t.owner_id=? AND t.household_id=?", id, u.ID, u.HouseholdID).Scan(&status, &version, &kind, &opening)
+	e = tx.QueryRow("SELECT t.status,t.version,t.type,a.opening_date FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.card_id IS NULL AND NOT EXISTS(SELECT 1 FROM card_invoices i WHERE i.payment_transaction_id=t.id) AND t.id=? AND t.owner_id=? AND t.household_id=?", id, u.ID, u.HouseholdID).Scan(&status, &version, &kind, &opening)
 	if e != nil {
 		fail(w, 404, "Lançamento não encontrado.")
 		return

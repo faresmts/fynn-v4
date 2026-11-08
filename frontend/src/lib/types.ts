@@ -15,6 +15,7 @@ export type Account = {
 };
 export type Category = { id: number; name: string; type: string };
 export type Transaction = {
+  invoice_payment: boolean;
   id: number;
   type: string;
   description: string;
@@ -60,6 +61,10 @@ export type Dashboard = {
     balance_cents: number;
   }[];
   household_expenses: {
+    source: 'transaction' | 'invoice';
+    mode: 'monthly_income_ratio' | 'equal' | 'custom';
+    version: number;
+    shares: Record<string,number>;
     id: number;
     description: string;
     category: string;

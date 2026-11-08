@@ -1056,6 +1056,7 @@ footer .green-dot {
 }
 .household-expense-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 13px 0;
@@ -1100,10 +1101,42 @@ input[type='file'] { padding:10px; }
 .card-import-grid > .panel:first-child > .primary { margin-top: 16px; }
 .card-registration { margin-top: 18px; }
 .inline-card-form { display:grid; grid-template-columns:160px minmax(180px,1fr) 120px auto; gap:12px; align-items:end; }
-.card-list { margin-top:18px; border-top:1px solid var(--line); }
-.card-list-row { display:flex; gap:12px; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); }
-.card-list-row span { color:var(--muted); margin-left:auto; }
-@media (max-width: 800px) { .inline-card-form { grid-template-columns:1fr; } .card-list-row span { margin-left:0; } }
+.card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 245px), 1fr));
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.card-list-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 16px 20px;
+  text-align: left;
+  white-space: normal;
+}
+.card-label { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.card-label strong { font-size: 14px; }
+.card-label small, .statement-heading p { color: var(--muted); }
+.statement-heading { display: grid; gap: 18px; margin-bottom: 24px; }
+.statement-back { justify-self: start; }
+.statement-back svg { transform: rotate(180deg); }
+.statement-heading-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+}
+.statement-heading h1 { overflow-wrap: anywhere; }
+.statement-heading p { margin-top: 4px; }
+.statement-heading label { margin: 0; }
+@media (max-width: 800px) { .inline-card-form { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  .statement-heading-row { grid-template-columns: minmax(0, 1fr); }
+  .statement-heading input { min-width: 0; max-width: 100%; }
+}
 .goal-row {
   padding: 15px 0;
   border-top: 1px solid var(--line);

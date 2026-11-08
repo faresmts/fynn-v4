@@ -1,7 +1,9 @@
 package app
 
 import (
-	"fmt"
+	"database/sql"
+	"errors"
+	"math/bits"
 	"meu-financeiro/internal/domain"
 	"net/http"
 	"strconv"
@@ -130,119 +132,176 @@ FROM users u LEFT JOIN income_snapshots s ON s.user_id=u.id AND s.household_id=u
 			people[i].RatioBps = people[i].IncomeCents * 10000 / total
 		}
 	}
-	if total == 0 {
+	allConfirmed := true
+	for _, p := range people {
+		allConfirmed = allConfirmed && p.Confirmed
+	}
+	if total == 0 || !allConfirmed {
 		reply(w, 200, map[string]any{"month": month, "status": "needs_rule", "people": people, "total_income_cents": int64(0), "message": "Confirme as rendas ou escolha divisão manual antes de ratear."})
 		return
 	}
 	reply(w, 200, map[string]any{"month": month, "status": "ready", "people": people, "total_income_cents": total})
 }
 
-func (a *App) splitTransaction(w http.ResponseWriter, r *http.Request, u User) {
+func (a *App) shareInvoiceLine(w http.ResponseWriter, r *http.Request, u User) {
 	id, e := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if e != nil {
-		fail(w, 404, "Despesa não encontrada.")
+		fail(w, 404, "Compra não encontrada.")
 		return
 	}
-	var x struct {
-		Version int              `json:"version"`
-		Mode    string           `json:"mode"`
-		Custom  map[string]int64 `json:"custom_cents"`
-	}
-	if !decode(w, r, &x) {
-		return
-	}
-	if x.Mode != "monthly_income_ratio" && x.Mode != "equal" && x.Mode != "custom" {
-		fail(w, 400, "Regra de rateio inválida.")
-		return
-	}
-	tx, e := a.DB.Begin()
+	// The reference never posts a transaction. Repeated requests preserve any saved split.
+	res, e := a.DB.Exec(`INSERT INTO shared_invoice_lines(line_id)
+ SELECT l.id FROM card_installments l JOIN card_invoices i ON i.id=l.invoice_id JOIN cards c ON c.id=i.card_id
+ WHERE l.id=? AND c.owner_id=? AND c.household_id=? AND i.status!='cancelled'
+ ON CONFLICT(line_id) DO NOTHING`, id, u.ID, u.HouseholdID)
 	if e != nil {
-		fail(w, 500, "Não foi possível ratear a despesa.")
+		fail(w, 500, "Falha ao compartilhar a compra.")
 		return
 	}
-	defer tx.Rollback()
-	var amount, version int
-	var month string
-	var owner int64
-	e = tx.QueryRow(`SELECT amount_cents,version,competence,owner_id FROM transactions WHERE id=? AND household_id=? AND type='expense' AND visibility='household' AND status!='cancelled'`, id, u.HouseholdID).Scan(&amount, &version, &month, &owner)
+	if n, _ := res.RowsAffected(); n == 0 {
+		var shared bool
+		e = a.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM household_costs WHERE source='invoice' AND id=? AND owner_id=? AND household_id=?)", id, u.ID, u.HouseholdID).Scan(&shared)
+		if e != nil || !shared {
+			fail(w, 404, "Compra não encontrada.")
+			return
+		}
+	}
+	reply(w, 200, map[string]bool{"shared": true})
+}
+
+type resident struct {
+	ID        int64
+	Name      string
+	Income    int64
+	Confirmed bool
+}
+
+func residents(tx *sql.Tx, u User, month string) ([]resident, error) {
+	rows, e := tx.Query(`SELECT u.id,u.name,coalesce(s.income_cents,0),coalesce(s.confirmed,0) FROM users u
+ LEFT JOIN income_snapshots s ON s.user_id=u.id AND s.household_id=u.household_id AND s.month=? WHERE u.household_id=? ORDER BY u.id`, month, u.HouseholdID)
 	if e != nil {
-		fail(w, 404, "Despesa compartilhada não encontrada.")
-		return
+		return nil, e
 	}
-	if version != x.Version {
-		fail(w, 409, "Esta despesa mudou. Atualize a página e tente novamente.")
-		return
-	}
-	var users []int64
-	rows, e := tx.Query("SELECT id FROM users WHERE household_id=? ORDER BY id", u.HouseholdID)
-	if e != nil {
-		fail(w, 500, "Não foi possível ratear a despesa.")
-		return
-	}
+	defer rows.Close()
+	var result []resident
 	for rows.Next() {
-		var uid int64
-		rows.Scan(&uid)
-		users = append(users, uid)
+		var p resident
+		if e := rows.Scan(&p.ID, &p.Name, &p.Income, &p.Confirmed); e != nil {
+			return nil, e
+		}
+		result = append(result, p)
 	}
-	rows.Close()
-	if len(users) != 2 {
-		fail(w, 400, "O rateio desta versão exige duas pessoas na família.")
-		return
+	return result, rows.Err()
+}
+
+func allocateSplit(amount int64, people []resident, mode string, custom map[int64]int64) (map[int64]int64, error) {
+	shares := make(map[int64]int64)
+	var totalIncome, allocated int64
+	for _, p := range people {
+		totalIncome += p.Income
 	}
-	shares := map[int64]int64{}
-	switch x.Mode {
-	case "equal":
-		shares[users[0]] = int64(amount / 2)
-		shares[users[1]] = int64(amount) - shares[users[0]]
-	case "custom":
-		var total int64
-		for _, uid := range users {
-			v, ok := x.Custom[strconv.FormatInt(uid, 10)]
-			if !ok || v < 0 {
-				fail(w, 400, "Informe as cotas das duas pessoas.")
-				return
+	for i, p := range people {
+		var part int64
+		switch mode {
+		case "equal":
+			part = amount / int64(len(people))
+		case "monthly_income_ratio":
+			if !p.Confirmed || totalIncome == 0 {
+				return nil, errors.New("Confirme as rendas do mês antes de usar a divisão proporcional.")
 			}
-			shares[uid] = v
-			total += v
+			hi, lo := bits.Mul64(uint64(amount), uint64(p.Income))
+			quotient, _ := bits.Div64(hi, lo, uint64(totalIncome))
+			part = int64(quotient)
+		case "custom":
+			v, ok := custom[p.ID]
+			if !ok || v < 0 || v > amount-allocated {
+				return nil, errors.New("Confira os valores de cada morador.")
+			}
+			part = v
+		default:
+			return nil, errors.New("Regra de divisão inválida.")
 		}
-		if total != int64(amount) {
-			fail(w, 400, "As cotas devem somar exatamente o valor da despesa.")
-			return
+		if mode != "custom" && i == len(people)-1 {
+			part = amount - allocated
 		}
-	case "monthly_income_ratio":
-		var i1, i2 int64
-		if e = tx.QueryRow("SELECT COALESCE(income_cents,0) FROM income_snapshots WHERE household_id=? AND user_id=? AND month=? AND confirmed=1", u.HouseholdID, users[0], month).Scan(&i1); e != nil {
-			fail(w, 400, "Confirme as duas rendas de referência antes de usar o rateio proporcional.")
-			return
-		}
-		if e = tx.QueryRow("SELECT COALESCE(income_cents,0) FROM income_snapshots WHERE household_id=? AND user_id=? AND month=? AND confirmed=1", u.HouseholdID, users[1], month).Scan(&i2); e != nil || i1+i2 <= 0 {
-			fail(w, 400, "Confirme as duas rendas de referência antes de usar o rateio proporcional.")
-			return
-		}
-		shares[users[0]] = int64(amount) * i1 / (i1 + i2)
-		shares[users[1]] = int64(amount) - shares[users[0]]
+		shares[p.ID] = part
+		allocated += part
 	}
-	if _, e = tx.Exec("DELETE FROM transaction_shares WHERE transaction_id=?", id); e == nil {
-		for _, uid := range users {
-			if _, e = tx.Exec("INSERT INTO transaction_shares(transaction_id,participant_id,share_cents,basis) VALUES(?,?,?,?)", id, uid, shares[uid], x.Mode); e != nil {
+	if allocated != amount || (mode == "custom" && len(custom) != len(people)) {
+		return nil, errors.New("As cotas devem somar o valor da despesa.")
+	}
+	return shares, nil
+}
+
+func (a *App) splitExpense(source string) func(http.ResponseWriter, *http.Request, User) {
+	return func(w http.ResponseWriter, r *http.Request, u User) {
+		id, e := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if e != nil {
+			fail(w, 404, "Despesa não encontrada.")
+			return
+		}
+		var x struct {
+			Version int             `json:"version"`
+			Mode    string          `json:"mode"`
+			Custom  map[int64]int64 `json:"custom_cents"`
+		}
+		if !decode(w, r, &x) {
+			return
+		}
+		tx, e := a.DB.BeginTx(r.Context(), nil)
+		if e != nil {
+			fail(w, 500, "Falha ao iniciar o rateio.")
+			return
+		}
+		defer tx.Rollback()
+		var amount int64
+		var version int
+		var month string
+		e = tx.QueryRow("SELECT amount_cents,version,competence FROM household_costs WHERE source=? AND id=? AND household_id=?", source, id, u.HouseholdID).Scan(&amount, &version, &month)
+		if e != nil {
+			fail(w, 404, "Despesa compartilhada não encontrada.")
+			return
+		}
+		if version != x.Version {
+			fail(w, 409, "Esta despesa mudou. Atualize a página.")
+			return
+		}
+		people, e := residents(tx, u, month)
+		if e != nil {
+			fail(w, 500, "Falha ao consultar moradores.")
+			return
+		}
+		shares, e := allocateSplit(amount, people, x.Mode, x.Custom)
+		if e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+		table, key, update := "transaction_shares", "transaction_id", "UPDATE transactions SET version=version+1 WHERE id=?"
+		if source == "invoice" {
+			table, key, update = "invoice_line_shares", "line_id", "UPDATE shared_invoice_lines SET version=version+1 WHERE line_id=?"
+		}
+		_, e = tx.Exec("DELETE FROM "+table+" WHERE "+key+"=?", id)
+		for _, p := range people {
+			if e != nil {
 				break
 			}
+			_, e = tx.Exec("INSERT INTO "+table+"("+key+",participant_id,share_cents,basis) VALUES(?,?,?,?)", id, p.ID, shares[p.ID], x.Mode)
 		}
+		if e == nil {
+			_, e = tx.Exec(update, id)
+		}
+		if e == nil {
+			_, e = tx.Exec("INSERT INTO audit(user_id,entity,entity_id,action) VALUES(?,?,?,'split')", u.ID, source, id)
+		}
+		if e == nil {
+			e = tx.Commit()
+		}
+		if e != nil {
+			fail(w, 500, "Falha ao salvar o rateio.")
+			return
+		}
+		reply(w, 200, map[string]any{"ok": true, "shares": shares})
 	}
-	if e == nil {
-		_, e = tx.Exec("UPDATE transactions SET version=version+1 WHERE id=?", id)
-	}
-	if e == nil {
-		_, e = tx.Exec("INSERT INTO audit(user_id,entity,entity_id,action) VALUES(?,'transaction',?,'split')", u.ID, id)
-	}
-	if e == nil {
-		e = tx.Commit()
-	}
-	if e != nil {
-		fail(w, 500, "Não foi possível ratear a despesa.")
-		return
-	}
-	reply(w, 200, map[string]any{"ok": true, "shares": shares})
 }
 
 func boolInt(v bool) int {
@@ -251,5 +310,3 @@ func boolInt(v bool) int {
 	}
 	return 0
 }
-
-var _ = fmt.Sprintf
