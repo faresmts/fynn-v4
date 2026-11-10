@@ -3,6 +3,7 @@
   import Icon from './lib/Icon.svelte';
   import CardStatement from './lib/CardStatement.svelte';
   import FuelForecast from './lib/FuelForecast.svelte';
+  import Financings from './lib/Financings.svelte';
   import type {
     User,
     Account,
@@ -113,6 +114,7 @@
     { id: 'household', name: 'Nossa casa', icon: 'home' },
     { id: 'planning', name: 'Metas e planejamento', icon: 'spark' },
     { id: 'fuel', name: 'Combustível', icon: 'fuel' },
+    { id: 'financings', name: 'Financiamentos', icon: 'bank' },
     { id: 'reports', name: 'Relatórios', icon: 'chart' },
   ];
   const palette = [
@@ -835,10 +837,10 @@
                         ? 'Acompanhe somente os lançamentos compartilhados com a família.'
                         : page === 'reports'
                           ? 'Entenda seus hábitos e acompanhe sua evolução.'
-                          : page === 'fuel' ? 'Estime o custo dos seus trajetos no mês.' : 'Um espaço que funciona do seu jeito.'}
+                          : page === 'fuel' ? 'Estime o custo dos seus trajetos no mês.' : page === 'financings' ? 'Acompanhe o valor pago e o saldo de cada contrato.' : 'Um espaço que funciona do seu jeito.'}
             </p>
           </div>
-          {#if page !== 'settings' && page !== 'cards' && page !== 'fuel'}<button
+          {#if page !== 'settings' && page !== 'cards' && page !== 'fuel' && page !== 'financings'}<button
               class="primary"
               onclick={() =>
                 openModal(
@@ -869,7 +871,7 @@
               onclick={load}>Tentar novamente</button
             >
           </div>{/if}
-        {#if page !== 'settings' && page !== 'accounts' && page !== 'cards'}<div class="toolbar">
+        {#if page !== 'settings' && page !== 'accounts' && page !== 'cards' && page !== 'financings'}<div class="toolbar">
             {#if page === 'fuel'}<span>Mês da previsão</span>{:else if page !== 'recurring'}<div class="segmented">
                 <button
                   class:chosen={context === 'personal'}
@@ -1805,6 +1807,7 @@
             >
           </div>{/if}
         {#if page === 'fuel' && month}{#key month}<FuelForecast {month} {api} {money} />{/key}{/if}
+        {#if page === 'financings'}<Financings {api} {money} {cents} />{/if}
         {#if page === 'planning'}<div class="planning-grid">
             <section class="panel">
               <div class="panel-heading">

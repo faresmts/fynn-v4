@@ -27,7 +27,7 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if version > 9 {
+	if version > 11 {
 		db.Close()
 		return nil, fmt.Errorf("unsupported schema version %d", version)
 	}
@@ -320,6 +320,49 @@ PRAGMA user_version=8;`)
 			return nil, e
 		}
 		_, e = tx.Exec(`CREATE TABLE fuel_forecasts(owner_id INTEGER NOT NULL REFERENCES users(id),month TEXT NOT NULL,inputs TEXT NOT NULL,PRIMARY KEY(owner_id,month)); PRAGMA user_version=9;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+	}
+	if version <= 9 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`CREATE TABLE financings(
+		id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id),
+		name TEXT NOT NULL, total_cents INTEGER NOT NULL CHECK(total_cents>0),
+		paid_cents INTEGER NOT NULL CHECK(paid_cents BETWEEN 0 AND total_cents),
+		installments INTEGER NOT NULL CHECK(installments>0), installment_cents INTEGER NOT NULL CHECK(installment_cents>0));
+		PRAGMA user_version=10;`)
+		if e != nil {
+			tx.Rollback()
+			db.Close()
+			return nil, e
+		}
+		if e = tx.Commit(); e != nil {
+			db.Close()
+			return nil, e
+		}
+	}
+	if version <= 10 {
+		tx, e := db.Begin()
+		if e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = tx.Exec(`CREATE TABLE financing_payments(id INTEGER PRIMARY KEY AUTOINCREMENT,
+		financing_id INTEGER NOT NULL REFERENCES financings(id), paid_on TEXT NOT NULL,
+		amount_cents INTEGER NOT NULL CHECK(amount_cents>0));
+		CREATE INDEX financing_payments_history ON financing_payments(financing_id,paid_on,id);
+		PRAGMA user_version=11;`)
 		if e != nil {
 			tx.Rollback()
 			db.Close()
