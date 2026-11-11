@@ -239,6 +239,31 @@
       boot = false;
     }
   });
+  let registering = $state(window.location.pathname === '/registro');
+  let unlocked = $state(false);
+  let accessKey = $state('');
+  let residentName = $state('');
+  async function register() {
+    if (busy) return;
+    busy = true;
+    error = '';
+    try {
+      if (!unlocked) {
+        await api('/registration/unlock', 'POST', { key: accessKey });
+        unlocked = true;
+      } else {
+        await api('/registration', 'POST', { key: accessKey, name: residentName, email, password });
+        password = accessKey = residentName = '';
+        unlocked = registering = false;
+        window.history.replaceState(null, '', '/');
+        notice = 'Conta criada. Entre com seu e-mail e senha.';
+      }
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      busy = false;
+    }
+  }
   async function login(isDemo = false) {
     busy = true;
     error = '';
@@ -654,14 +679,31 @@
           ></span
         ></a
       >
+      {#if registering && !demo}
+        <h1>{unlocked ? 'Cadastrar morador' : 'Autorizar cadastro'}</h1>
+      {:else}
       <div class="eyebrow">BEM-VINDO AO SEU ESPAÇO</div>
       <h1>Mais clareza.<br />Mais tranquilidade.</h1>
       <p>Suas finanças pessoais e da casa,<br />organizadas em um só lugar.</p>
+      {/if}
       {#if error}<div class="alert error" role="alert">
           {error}
         </div>{/if}{#if notice}<div class="alert success" role="status">
           {notice}
         </div>{/if}
+      {#if registering && !demo}
+        <form onsubmit={(event) => { event.preventDefault(); void register(); }}>
+          {#if unlocked}
+            <label>Nome<input autocomplete="name" bind:value={residentName} required maxlength="120" /></label>
+            <label>E-mail<input type="email" autocomplete="username" bind:value={email} required maxlength="254" /></label>
+            <label>Senha da conta (mínimo de 12 caracteres)<input type="password" autocomplete="new-password" bind:value={password} minlength="12" required /></label>
+          {:else}
+            <label>Senha de autorização<input type="password" autocomplete="off" bind:value={accessKey} required /></label>
+          {/if}
+          <button class="primary full" disabled={busy}>{busy ? 'Aguarde…' : unlocked ? 'Criar conta' : 'Continuar'}</button>
+          <a class="login-secondary-link" href="/">Voltar ao login</a>
+        </form>
+      {:else}
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -691,6 +733,8 @@
           /></button
         >
       </form>
+      {#if !demo}<a class="login-secondary-link" href="/registro">Cadastrar morador</a>{/if}
+      {/if}
       {#if demo}<div class="demo-entry">
           <span>Ambiente local com dados fictícios</span><button
             class="secondary full"

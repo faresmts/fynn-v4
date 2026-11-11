@@ -16,6 +16,8 @@ func (a *App) Handler(frontend string) http.Handler {
 		reply(w, 200, map[string]string{"status": "ok"})
 	})
 	m.HandleFunc("GET /api/v1/config", func(w http.ResponseWriter, r *http.Request) { reply(w, 200, map[string]bool{"demo": a.Demo}) })
+	m.HandleFunc("POST /api/v1/registration/unlock", a.registration)
+	m.HandleFunc("POST /api/v1/registration", a.registration)
 	m.HandleFunc("POST /api/v1/sessions", a.login)
 	m.HandleFunc("DELETE /api/v1/sessions/current", a.authenticated(a.logout))
 	m.HandleFunc("GET /api/v1/me", a.authenticated(func(w http.ResponseWriter, r *http.Request, u User) { reply(w, 200, u) }))

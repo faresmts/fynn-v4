@@ -14,6 +14,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/mail"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -97,6 +99,31 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+func (a *App) acceptsOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	if origin == a.Origin {
+		return true
+	}
+	configured, err := url.Parse(a.Origin)
+	if err != nil || configured.Scheme != "http" || a.Secure {
+		return false
+	}
+	for _, host := range []string{"localhost", "127.0.0.1", "[::1]"} {
+		if configured.Port() != "" {
+			host += ":" + configured.Port()
+		}
+		if origin == "http://"+host {
+			switch configured.Hostname() {
+			case "localhost", "127.0.0.1", "::1":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) authenticated(next func(http.ResponseWriter, *http.Request, User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, e := r.Cookie("mf_session")
@@ -111,7 +138,7 @@ func (a *App) authenticated(next func(http.ResponseWriter, *http.Request, User))
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
-			if r.Header.Get("Origin") != a.Origin || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(u.CSRF)) != 1 {
+			if !a.acceptsOrigin(r.Header.Get("Origin")) || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(u.CSRF)) != 1 {
 				fail(w, 403, "Não foi possível validar esta solicitação.")
 				return
 			}
@@ -120,7 +147,7 @@ func (a *App) authenticated(next func(http.ResponseWriter, *http.Request, User))
 	}
 }
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Origin") != a.Origin {
+	if !a.acceptsOrigin(r.Header.Get("Origin")) {
 		fail(w, 403, "Origem não autorizada.")
 		return
 	}
@@ -213,6 +240,49 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request, u User) {
 	http.SetCookie(w, &http.Cookie{Name: "mf_session", Path: "/", HttpOnly: true, Secure: a.Secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	reply(w, 200, map[string]bool{"ok": true})
 }
+
+var errHouseholdFull = errors.New("a família já possui duas pessoas")
+
+const registrationKeyDigest = "25e53b69d0314203d8c2e180702c566d94a69ca7e0fd26c4d37348c9e15a28cc"
+
+func (a *App) registration(w http.ResponseWriter, r *http.Request) {
+	if a.Demo || !a.acceptsOrigin(r.Header.Get("Origin")) {
+		fail(w, 403, "Cadastro indisponível nesta origem.")
+		return
+	}
+	var input struct{ Key, Name, Email, Password string }
+	if !decode(w, r, &input) {
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(digest(input.Key)), []byte(registrationKeyDigest)) != 1 {
+		fail(w, 403, "Senha de autorização incorreta.")
+		return
+	}
+	if r.URL.Path == "/api/v1/registration/unlock" {
+		reply(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	input.Email = strings.TrimSpace(input.Email)
+	address, err := mail.ParseAddress(input.Email)
+	if err != nil || address.Address != input.Email || len(input.Email) > 254 || input.Name == "" || len(input.Name) > 120 || len(input.Password) < 12 || len(input.Password) > 1024 {
+		fail(w, 400, "Confira o nome, o e-mail e a senha de pelo menos 12 caracteres.")
+		return
+	}
+	if err := Provision(a.DB, input.Name, input.Email, input.Password); err != nil {
+		switch {
+		case errors.Is(err, errHouseholdFull):
+			fail(w, 409, "A casa já tem dois moradores cadastrados.")
+		case strings.Contains(err.Error(), "UNIQUE constraint failed: users.email"):
+			fail(w, 409, "Este e-mail já está cadastrado.")
+		default:
+			fail(w, 500, "Não foi possível criar a conta.")
+		}
+		return
+	}
+	reply(w, 201, map[string]bool{"ok": true})
+}
+
 func Provision(db *sql.DB, name, email, password string) error {
 	if len(password) < 12 || len(password) > 1024 || !strings.Contains(email, "@") || len(name) == 0 {
 		return errors.New("nome, e-mail e senha de pelo menos 12 caracteres são obrigatórios")
@@ -231,7 +301,7 @@ func Provision(db *sql.DB, name, email, password string) error {
 		return e
 	}
 	if n >= 2 {
-		return errors.New("a família já possui duas pessoas")
+		return errHouseholdFull
 	}
 	if _, e = tx.Exec("INSERT INTO users(household_id,name,email,password_hash) VALUES(1,?,?,?)", name, strings.ToLower(strings.TrimSpace(email)), hash); e != nil {
 		return fmt.Errorf("provisionar usuário: %w", e)

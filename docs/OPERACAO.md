@@ -14,7 +14,40 @@ Os arquivos de `deploy/` são modelos revisáveis; nenhuma VPS, domínio, certif
 
 A configuração atual de limite de login usa o IP da conexão direta. Atrás de Nginx todas as tentativas compartilham o IP de loopback. Isso é conservador para duas pessoas, mas requer política de proxy confiável antes de ampliar o uso. `X-Forwarded-For` não é confiado implicitamente.
 
-## Backup
+## Publicação automática pela master (Ubuntu na Oracle Cloud)
+
+O workflow `.github/workflows/ci.yml` testa pushes e pull requests. Cada push na master que passa nos testes publica o último commit daquele push via SSH. O runner precisa alcançar o SSH da VM na porta 22. Uma regra que libera apenas o IP do seu computador impede o runner hospedado no GitHub de conectar.
+
+Prepare a VM uma vez. Execute como administrador, com os arquivos do projeto disponíveis no diretório atual:
+
+```bash
+sudo useradd --system --home-dir /var/lib/meu-financeiro --shell /usr/sbin/nologin financeiro
+sudo adduser --disabled-password --gecos '' mfdeploy
+sudo install -d -m 700 -o mfdeploy -g mfdeploy /home/mfdeploy/.ssh
+sudo install -d -m 755 -o mfdeploy -g mfdeploy /opt/meu-financeiro /opt/meu-financeiro/releases
+sudo install -d -m 700 -o financeiro -g financeiro /var/lib/meu-financeiro
+sudo install -m 600 .env.example /etc/meu-financeiro.env
+sudoedit /etc/meu-financeiro.env
+sudo install -m 644 deploy/meu-financeiro.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable meu-financeiro.service
+sudo visudo -f /etc/sudoers.d/meu-financeiro-deploy
+```
+
+Reutilize usuários e configuração já existentes. No sudoers, inclua apenas `mfdeploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart meu-financeiro.service`. Configure `MF_ORIGIN` com a URL pública HTTPS. Siga o procedimento de primeira implantação acima para Nginx, certificado e banco. Para levar os dados locais, instale um snapshot consistente em `/var/lib/meu-financeiro/financeiro.db` com proprietário `financeiro` e modo 0600 antes da primeira publicação. Se a VM já contém dados, preserve o banco existente.
+
+Gere uma chave exclusiva no seu computador com `ssh-keygen -t ed25519 -f ./mfdeploy-key`, em diretório privado fora do repositório, usando frase secreta vazia para automação. Adicione **a chave pública** ao `authorized_keys` de mfdeploy, com dono mfdeploy e permissão 0600. No GitHub, em Settings → Secrets and variables → Actions, crie os repository secrets:
+
+| Nome | Valor |
+| --- | --- |
+| DEPLOY_HOST | IP público ou nome DNS da VM |
+| DEPLOY_USER | mfdeploy |
+| DEPLOY_SSH_KEY | Conteúdo completo da chave privada dedicada |
+| DEPLOY_KNOWN_HOSTS | Uma linha `HOST ssh-ed25519 CHAVE_PUBLICA_DO_SERVIDOR`, usando o mesmo host de DEPLOY_HOST e os dois primeiros campos de `/etc/ssh/ssh_host_ed25519_key.pub` obtidos pelo console confiável da VM |
+
+Para Ampere A1, defina a **variável** de repositório `DEPLOY_ARCH=arm64`. Para E2 Micro o padrão é `amd64`. Proteja a master e revise alterações ao workflow, pois o código integrado a ela tem acesso ao deploy. Configure os backups externos antes de usar dados reais. Para verificar uma publicação, consulte o passo “Publicar na VM Oracle” no GitHub e teste o login pelo endereço HTTPS. Cada release tem diretório próprio; as versões anteriores ficam disponíveis para recuperação e exigem limpeza periódica conforme o espaço da VM.
+
+## Rotina de backup
 
 `snapshot.py` utiliza `sqlite3.Connection.backup`, que usa a Online Backup API; nunca copia apenas o `.db` ativo em WAL. O snapshot é validado com `integrity_check` e `foreign_key_check`.
 

@@ -1529,6 +1529,26 @@ dialog::backdrop {
   margin-top: 7px;
   padding: 14px;
 }
+.login-secondary-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 44px;
+  margin-inline: auto;
+  padding-inline: 14px;
+  border-radius: 8px;
+  color: #8bdfbf;
+  font-size: 14px;
+  font-weight: 600;
+}
+.login form + .login-secondary-link {
+  margin-top: 12px;
+}
+.login-secondary-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 .demo-entry {
   border-top: 1px solid var(--line);
   margin-top: 23px;

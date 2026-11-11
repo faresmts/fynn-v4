@@ -1,5 +1,10 @@
 name: checks
 on: [push, pull_request]
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -9,14 +14,12 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.25.0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
       - name: Go format, vet, race tests and build
         working-directory: backend
         run: |
@@ -33,3 +36,26 @@ jobs:
       - name: Consistent backup and restore test
         working-directory: deploy
         run: python3 -m unittest test_snapshot.py
+      - name: Publicar na VM Oracle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST_KEYS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          TARGET_ARCH: ${{ vars.DEPLOY_ARCH || 'amd64' }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}" "${DEPLOY_KEY:?}" "${HOST_KEYS:?}"
+          case "$TARGET_ARCH" in amd64|arm64) ;; *) exit 1 ;; esac
+          (cd backend && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" go build -trimpath -o server ./cmd/server)
+          auth=$(mktemp -d)
+          chmod 700 "$auth"
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > "$auth/key"
+          printf '%s\n' "$HOST_KEYS" > "$auth/hosts"
+          remote=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$auth/hosts" -i "$auth/key" "$DEPLOY_USER@$DEPLOY_HOST")
+          release="/opt/meu-financeiro/releases/$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          tar -czf "$RUNNER_TEMP/release.tgz" backend/server frontend/dist deploy
+          "${remote[@]}" "mkdir -m 755 '$release' && tar -xzf - -C '$release' && chmod -R a+rX '$release'" < "$RUNNER_TEMP/release.tgz"
+          "${remote[@]}" "bash '$release/deploy/activate.sh' '$release'"
