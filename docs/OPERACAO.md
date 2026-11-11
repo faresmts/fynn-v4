@@ -14,9 +14,9 @@ Os arquivos de `deploy/` são modelos revisáveis; nenhuma VPS, domínio, certif
 
 A configuração atual de limite de login usa o IP da conexão direta. Atrás de Nginx todas as tentativas compartilham o IP de loopback. Isso é conservador para duas pessoas, mas requer política de proxy confiável antes de ampliar o uso. `X-Forwarded-For` não é confiado implicitamente.
 
-## Publicação automática pela master (Ubuntu na Oracle Cloud)
+## Publicação automática pela main (Ubuntu na Oracle Cloud)
 
-O workflow `.github/workflows/ci.yml` testa pushes e pull requests. Cada push na master que passa nos testes publica o último commit daquele push via SSH. O runner precisa alcançar o SSH da VM na porta 22. Uma regra que libera apenas o IP do seu computador impede o runner hospedado no GitHub de conectar.
+O workflow `.github/workflows/ci.yml` testa pushes e pull requests. Cada push na main que passa nos testes publica o último commit daquele push via SSH. O runner precisa alcançar o SSH da VM na porta 22. Uma regra que libera apenas o IP do seu computador impede o runner hospedado no GitHub de conectar.
 
 Prepare a VM uma vez. Execute como administrador, com os arquivos do projeto disponíveis no diretório atual:
 
@@ -45,7 +45,7 @@ Gere uma chave exclusiva no seu computador com `ssh-keygen -t ed25519 -f ./mfdep
 | DEPLOY_SSH_KEY | Conteúdo completo da chave privada dedicada |
 | DEPLOY_KNOWN_HOSTS | Uma linha `HOST ssh-ed25519 CHAVE_PUBLICA_DO_SERVIDOR`, usando o mesmo host de DEPLOY_HOST e os dois primeiros campos de `/etc/ssh/ssh_host_ed25519_key.pub` obtidos pelo console confiável da VM |
 
-Para Ampere A1, defina a **variável** de repositório `DEPLOY_ARCH=arm64`. Para E2 Micro o padrão é `amd64`. Proteja a master e revise alterações ao workflow, pois o código integrado a ela tem acesso ao deploy. Configure os backups externos antes de usar dados reais. Para verificar uma publicação, consulte o passo “Publicar na VM Oracle” no GitHub e teste o login pelo endereço HTTPS. Cada release tem diretório próprio; as versões anteriores ficam disponíveis para recuperação e exigem limpeza periódica conforme o espaço da VM.
+Para Ampere A1, defina a **variável** de repositório `DEPLOY_ARCH=arm64`. Para E2 Micro o padrão é `amd64`. Proteja a main e revise alterações ao workflow, pois o código integrado a ela tem acesso ao deploy. Configure os backups externos antes de usar dados reais. Para verificar uma publicação, consulte o passo “Publicar na VM Oracle” no GitHub e teste o login pelo endereço HTTPS. Cada release tem diretório próprio; as versões anteriores ficam disponíveis para recuperação e exigem limpeza periódica conforme o espaço da VM.
 
 ## Rotina de backup
 

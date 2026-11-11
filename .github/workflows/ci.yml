@@ -37,7 +37,7 @@ jobs:
         working-directory: deploy
         run: python3 -m unittest test_snapshot.py
       - name: Publicar na VM Oracle
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
