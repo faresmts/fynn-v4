@@ -25,6 +25,7 @@ type Category struct {
 	Type string `json:"type"`
 }
 type Transaction struct {
+	PersonalShare  *int64  `json:"personal_share_cents,omitempty"`
 	InvoicePayment bool    `json:"invoice_payment"`
 	ID             int64   `json:"id"`
 	Type           string  `json:"type"`
@@ -259,10 +260,26 @@ func (a *App) createTransaction(w http.ResponseWriter, r *http.Request, u User) 
 const transactionSelect = `SELECT t.id,t.type,t.description,t.amount_cents,t.expected_cents,t.account_id,t.destination_id,t.category_id,t.date,t.competence,t.due_date,t.status,t.paid_date,t.visibility,t.recurring_rule_id,t.version,CASE WHEN i.id IS NOT NULL THEN 'Pagamento de fatura' ELSE COALESCE(c.name,'Transferência') END,a.name,t.owner_id,i.id IS NOT NULL FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id LEFT JOIN card_invoices i ON i.payment_transaction_id=t.id `
 
 func (a *App) transactionList(u User, month, context string) ([]Transaction, error) {
+	var shares map[int64]int64
+	if context == "personal" && month != "" {
+		costs, _, err := a.householdBreakdown(u, month)
+		if err != nil {
+			return nil, err
+		}
+		shares = make(map[int64]int64)
+		for _, cost := range costs {
+			if cost.Source == "transaction" {
+				shares[cost.ID] = cost.Shares[u.ID]
+			}
+		}
+	}
 	query := transactionSelect + `WHERE t.card_id IS NULL AND t.household_id=? AND `
 	args := []any{u.HouseholdID}
 	if context == "household" {
 		query += "t.visibility='household'"
+	} else if shares != nil {
+		query += "(t.owner_id=? OR (t.visibility='household' AND t.type='expense' AND t.status!='cancelled'))"
+		args = append(args, u.ID)
 	} else {
 		query += "t.owner_id=?"
 		args = append(args, u.ID)
@@ -282,6 +299,9 @@ func (a *App) transactionList(u User, month, context string) ([]Transaction, err
 		var t Transaction
 		if e = rows.Scan(&t.ID, &t.Type, &t.Description, &t.Amount, &t.Expected, &t.AccountID, &t.DestinationID, &t.CategoryID, &t.Date, &t.Competence, &t.DueDate, &t.Status, &t.PaidDate, &t.Visibility, &t.RuleID, &t.Version, &t.Category, &t.Account, &t.OwnerID, &t.InvoicePayment); e != nil {
 			return nil, e
+		}
+		if share, ok := shares[t.ID]; ok {
+			t.PersonalShare = &share
 		}
 		if t.OwnerID != u.ID {
 			t.Account = "Conta privada"

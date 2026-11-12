@@ -271,3 +271,29 @@ func TestLoginRateLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonalRentShares(t *testing.T) {
+	f := setup(t)
+	x := expense()
+	x.Visibility, x.Amount = "household", 179258
+	f.create(x, "shared-rent-key-001")
+	for i, income := range []int{643500, 275858} {
+		if _, err := f.db.Exec("INSERT INTO income_snapshots(household_id,user_id,month,income_cents,rule_mode,confirmed) VALUES(1,?,?,?,'monthly_income_ratio',1)", i+1, x.Competence, income); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, want := range []int64{125470, 53788} {
+		if i == 1 {
+			f.login("marina@test.local", "other-test-password")
+		}
+		w := f.request("GET", "/api/v1/transactions?context=personal&month="+x.Competence, nil, "")
+		var response struct{ Items []Transaction }
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || len(response.Items) != 1 {
+			t.Fatal(w.Body.String())
+		}
+		row := response.Items[0]
+		if row.Amount != x.Amount || row.PersonalShare == nil || *row.PersonalShare != want {
+			t.Fatalf("unexpected rent share for resident %d: %+v", i+1, row)
+		}
+	}
+}

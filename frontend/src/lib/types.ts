@@ -15,6 +15,7 @@ export type Account = {
 };
 export type Category = { id: number; name: string; type: string };
 export type Transaction = {
+  personal_share_cents?: number;
   invoice_payment: boolean;
   id: number;
   type: string;

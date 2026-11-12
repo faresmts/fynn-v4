@@ -483,7 +483,9 @@
       for (const person of sharingSummary.people)
         customShares[String(person.id)] = item?.shares ? ((item.shares[person.id] ?? 0) / 100).toFixed(2).replace('.', ',') : '';
     }
-    requestKey = crypto.randomUUID();
+    requestKey = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+      byte.toString(16).padStart(2, '0'),
+    ).join('');
     await tick();
     dialog.showModal();
   }
@@ -1653,9 +1655,7 @@
                           : t.type === 'expense' || t.invoice_payment
                             ? '−'
                             : ''}
-                        {money(
-                          t.amount_cents,
-                        )}{#if t.expected_cents !== t.amount_cents}<small
+                        {money(t.personal_share_cents ?? t.amount_cents)}{#if t.personal_share_cents !== undefined}<small>Sua parte · Total da casa: {money(t.amount_cents)}</small>{:else if t.expected_cents !== t.amount_cents}<small
                             >Previsto: {money(t.expected_cents)}</small
                           >{/if}</td
                       ><td
